@@ -1,0 +1,54 @@
+{
+  "name": "pi-pocket",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "手机连上同局域网电脑的 Pi Agent：浏览/进入电脑上所有 pi 会话（手机浏览器 PWA + Android APK）",
+  "bin": {
+    "pi-pocket": "./server.mjs"
+  },
+  "files": [
+    "server.mjs",
+    "src",
+    "public",
+    "tools",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node server.mjs",
+    "start:open": "node server.mjs --qr --open",
+    "build:legacy": "esbuild public/app.js --target=chrome69 --format=esm --outfile=public/app.legacy.js --log-level=warning --banner:js='/* 自动生成，请勿手改：由 public/app.js 经 esbuild --target=chrome69 降级而来，供旧版 Android WebView 使用。改代码请改 app.js 后执行 npm run build:legacy */'",
+    "build:android": "cd android && ./build.sh",
+    "check": "node tools/ui-check.mjs",
+    "check:send": "node tools/send-check.mjs",
+    "check:android": "./tools/android-netcheck.sh",
+    "demo:data": "node tools/demo-data.mjs",
+    "demo:serve": "PI_CODING_AGENT_DIR=$HOME/pi-pocket-demo/.state/agent node server.mjs --port=8899",
+    "demo:shots": "node tools/ui-check.mjs 8899 \"\" demo"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/duceman495/pi-pocket.git"
+  },
+  "keywords": [
+    "pi",
+    "coding-agent",
+    "android",
+    "pwa",
+    "lan",
+    "webview",
+    "ai-agent"
+  ]
+}

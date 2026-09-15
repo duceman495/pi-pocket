@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动页/连接页 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+	android:layout_width="match_parent"
+	android:layout_height="match_parent"
+	android:orientation="vertical"
+	android:background="@color/bg"
+	android:fitsSystemWindows="true"
+	android:padding="24dp">
+
+	<LinearLayout
+		android:layout_width="wrap_content"
+		android:layout_height="wrap_content"
+		android:orientation="horizontal"
+		android:gravity="center_vertical"
+		android:layout_marginTop="24dp"
+		android:layout_marginBottom="24dp">
+
+		<TextView
+			android:layout_width="44dp"
+			android:layout_height="44dp"
+			android:background="@drawable/logo_bg"
+			android:gravity="center"
+			android:text="π"
+			android:textColor="@color/accent"
+			android:textSize="24sp"
+			android:textStyle="bold" />
+
+		<LinearLayout
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:orientation="vertical"
+			android:layout_marginStart="12dp">
+
+			<TextView
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:text="@string/app_name"
+				android:textColor="@color/text"
+				android:textSize="20sp"
+				android:textStyle="bold" />
+
+			<TextView
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:text="@string/host_hint"
+				android:textColor="@color/dim"
+				android:textSize="12sp" />
+		</LinearLayout>
+	</LinearLayout>
+
+	<EditText
+		android:id="@+id/hostInput"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:background="@drawable/input_bg"
+		android:hint="@string/host_hint"
+		android:inputType="textUri"
+		android:maxLines="1"
+		android:padding="14dp"
+		android:textColor="@color/text"
+		android:textColorHint="@color/dim"
+		android:textSize="16sp"
+		android:importantForAutofill="no" />
+
+	<EditText
+		android:id="@+id/tokenInput"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:layout_marginTop="10dp"
+		android:background="@drawable/input_bg"
+		android:hint="@string/token_hint"
+		android:inputType="text"
+		android:maxLines="1"
+		android:padding="14dp"
+		android:textColor="@color/text"
+		android:textColorHint="@color/dim"
+		android:textSize="16sp"
+		android:importantForAutofill="no" />
+
+	<LinearLayout
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:layout_marginTop="14dp"
+		android:orientation="horizontal">
+
+		<Button
+			android:id="@+id/connectBtn"
+			android:layout_width="0dp"
+			android:layout_height="48dp"
+			android:layout_weight="2"
+			android:background="@drawable/btn_primary"
+			android:text="@string/connect"
+			android:textAllCaps="false"
+			android:textColor="#DBE8FF"
+			android:textSize="16sp" />
+
+		<Button
+			android:id="@+id/scanBtn"
+			android:layout_width="0dp"
+			android:layout_height="48dp"
+			android:layout_marginStart="10dp"
+			android:layout_weight="1"
+			android:background="@drawable/btn_ghost"
+			android:text="@string/scan"
+			android:textAllCaps="false"
+			android:textColor="@color/text"
+			android:textSize="15sp" />
+	</LinearLayout>
+
+	<TextView
+		android:id="@+id/statusText"
+		android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:layout_marginTop="14dp"
+		android:textColor="@color/dim"
+		android:textSize="13sp"
+		android:text="" />
+
+	<TextView
+		android:layout_width="wrap_content"
+		android:layout_height="wrap_content"
+		android:layout_marginTop="18dp"
+		android:text="@string/recent"
+		android:textColor="@color/dim"
+		android:textSize="12sp" />
+
+	<ScrollView
+		android:layout_width="match_parent"
+		android:layout_height="0dp"
+		android:layout_weight="1"
+		android:layout_marginTop="6dp"
+		android:scrollbars="none">
+
+		<LinearLayout
+			android:id="@+id/deviceList"
+			android:layout_width="match_parent"
+			android:layout_height="wrap_content"
+			android:orientation="vertical" />
+	</ScrollView>
+</LinearLayout>

@@ -1,0 +1,9 @@
+node_modules/
+android/build/
+android/dist/
+android/debug.keystore
+*.log
+.pi-pocket-demo/
+*.apk
+!android/dist/pi-pocket.apk
+.DS_Store

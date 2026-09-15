@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			name="viewport"
+			content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+		/>
+		<meta name="theme-color" content="#0b0d12" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+		<meta name="apple-mobile-web-app-title" content="Pi Pocket" />
+		<title>Pi Pocket</title>
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<link rel="stylesheet" href="/style.css" />
+		<script src="/compat.js"></script>
+		<script>
+			/* 老版 Android WebView 不支持 ?. / ??，会直接 SyntaxError 导致白屏。
+			   这里探测一下，不支持就加载 esbuild 降级后的 app.legacy.js。
+			   本段必须保持 ES5 语法（它不会被转译）。
+			   普通 <script> 而非 type=module：兼容更老的 WebView。 */
+			(function () {
+				var modern = true;
+				try {
+					new Function("var a={};return a?.b ?? 1");
+				} catch (e) {
+					modern = false;
+				}
+				if (location.search.indexOf("legacy=1") >= 0) modern = false;
+				var s = document.createElement("script");
+				s.src = modern ? "/app.js" : "/app.legacy.js";
+				document.head.appendChild(s);
+			})();
+		</script>
+	</head>
+	<body>
+		<!-- ============================ 会话列表 ============================ -->
+		<section id="view-home" class="view">
+			<header class="topbar">
+				<div class="topbar-title">
+					<span class="logo">π</span>
+					<div>
+						<div class="t1">Pi Pocket</div>
+						<div class="t2" id="server-line">连接中…</div>
+					</div>
+				</div>
+				<div class="topbar-actions">
+					<button id="btn-refresh" class="icon-btn" title="刷新">⟳</button>
+				</div>
+			</header>
+
+			<div class="scroll">
+				<div id="banner" class="banner hidden"></div>
+
+				<div class="searchbar">
+					<input id="search" type="search" placeholder="搜索会话…" autocomplete="off" />
+				</div>
+
+				<div class="quick-actions">
+					<button id="btn-new-here" class="quick-btn">
+						<span>＋</span> 在当前目录新建会话
+					</button>
+					<button id="btn-new-dir" class="quick-btn ghost">
+						<span>📁</span> 选择其它目录
+					</button>
+				</div>
+
+				<div id="projects" class="projects"></div>
+				<div id="home-empty" class="empty hidden">
+					<p>还没有任何会话</p>
+					<p class="dim">点上方按钮新建一个开始吧</p>
+				</div>
+			</div>
+		</section>
+
+		<!-- ============================== 对话 ============================== -->
+		<section id="view-chat" class="view hidden">
+			<header class="topbar chat-topbar">
+				<button id="btn-back" class="icon-btn" title="返回会话列表">←</button>
+				<div class="topbar-title chat-title">
+					<div class="t1" id="chat-title">会话</div>
+					<div class="t2" id="chat-sub">—</div>
+				</div>
+				<button id="btn-menu" class="icon-btn" title="更多">⋯</button>
+			</header>
+			<div class="status-strip" id="status-strip"></div>
+
+			<div id="messages" class="scroll messages"></div>
+
+			<footer class="composer">
+				<textarea
+					id="input"
+					rows="1"
+					placeholder="给 agent 发消息…"
+					enterkeyhint="send"
+				></textarea>
+				<button id="btn-send" class="send-btn">发送</button>
+				<button id="btn-stop" class="send-btn stop hidden">停止</button>
+			</footer>
+		</section>
+
+		<!-- ============================== 弹层 ============================== -->
+		<div id="sheet" class="sheet hidden">
+			<div class="sheet-panel">
+				<div class="sheet-head">
+					<strong id="sheet-title">菜单</strong>
+					<button id="sheet-close" class="icon-btn">✕</button>
+				</div>
+				<div id="sheet-body" class="sheet-body"></div>
+			</div>
+		</div>
+
+		<div id="confirm" class="sheet hidden">
+			<div class="sheet-panel small">
+				<div class="sheet-head"><strong id="confirm-title">确认</strong></div>
+				<div id="confirm-body" class="sheet-body"></div>
+				<div class="confirm-actions">
+					<button id="confirm-cancel" class="btn ghost">取消</button>
+					<button id="confirm-ok" class="btn primary">确定</button>
+				</div>
+			</div>
+		</div>
+
+		<div id="toast" class="toast hidden"></div>
+	</body>
+</html>
