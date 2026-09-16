@@ -692,3 +692,38 @@ body {
 	max-width: 90vw;
 	text-align: center;
 }
+
+/* 终端 pi 正在运行时的「接着聊」卡片 */
+.bridge-card {
+	background: linear-gradient(135deg, #16352a, #14241f);
+	border: 1px solid #2f5d43;
+	border-radius: var(--radius);
+	padding: 12px 13px;
+	margin: 12px 12px 4px;
+}
+.bridge-card:active {
+	filter: brightness(1.15);
+}
+.bridge-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 6px;
+}
+.bridge-head .dim {
+	font-size: 11.5px;
+	color: var(--dim);
+}
+.bridge-cwd {
+	font-family: ui-monospace, Menlo, monospace;
+	font-size: 12px;
+	color: #b9c6da;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.bridge-hint {
+	margin-top: 6px;
+	font-size: 12.5px;
+	color: #8fb69f;
+}

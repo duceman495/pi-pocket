@@ -206,10 +206,67 @@ function sessionTitle(s) {
 	return p.length > 60 ? p.slice(0, 60) + "…" : p;
 }
 
+/** 终端里那个 pi（有桥接时）→ 首页顶部一张"接着聊"卡片 */
+function bridgeBanner() {
+	const b = app.health?.bridge;
+	if (!b?.available) return null;
+	// 已经有会话在跟它连线就不重复给了
+	const alreadyOpen = [...app.running.values()].some((a) => a.mode === "bridge");
+	if (alreadyOpen) return null;
+
+	const box = el("div", "bridge-card");
+	const head = el("div", "bridge-head");
+	head.append(el("span", "badge live", "终端 pi 正在运行"), el("span", "dim", `pid ${b.pid ?? "?"}`));
+	box.append(head);
+	box.append(el("div", "bridge-cwd", prettyCwd(b.cwd) || b.cwd || "—"));
+	box.append(
+		el("div", "bridge-hint", "接上去继续聊——和终端是同一个 agent，两边显示实时一致"),
+	);
+	box.addEventListener("click", () => enterTerminalSession());
+	return box;
+}
+
+/** 接入终端里正在跑的那个 pi */
+async function enterTerminalSession() {
+	const b = app.health?.bridge;
+	if (!b?.available) return toast("终端里没有可接入的 pi");
+	const box = $("messages");
+	box.replaceChildren(el("div", "msg note", "正在接入终端的 pi…"));
+	showView("chat");
+	app.chat = {
+		key: null,
+		label: "终端会话",
+		cwd: b.cwd,
+		info: { status: "starting", state: {}, cwd: b.cwd, mode: "bridge" },
+		nodes: new Map(),
+		pending: new Map(),
+		callCards: new Map(),
+		toolResults: new Map(),
+	};
+	history.pushState({ view: "chat" }, "", chatUrl(null));
+	try {
+		const { agent } = await api("/api/agents/open", {
+			method: "POST",
+			body: JSON.stringify({ sessionPath: b.sessionFile, cwd: b.cwd }),
+		});
+		app.chat.key = agent.key;
+		app.chat.info = { ...agent, label: agent.state?.sessionName || "终端会话" };
+		app.chat.label = app.chat.info.label;
+		history.replaceState({ view: "chat" }, "", chatUrl(agent.key));
+		await attachToBridge(agent.key);
+		loadRunning();
+	} catch (err) {
+		box.replaceChildren(el("div", "msg err", `接入失败：${err.message}`));
+	}
+}
+
 function renderHome() {
 	const wrap = $("projects");
 	wrap.replaceChildren();
 	const q = app.search.trim().toLowerCase();
+
+	const card = bridgeBanner();
+	if (card) wrap.append(card);
 
 	let total = 0;
 	for (const project of app.catalog.projects) {
@@ -270,11 +327,13 @@ function renderHome() {
 
 async function loadCatalog() {
 	try {
-		app.catalog = await api("/api/catalog");
 		const health = await api("/api/health");
 		app.health = health;
+		app.catalog = await api("/api/catalog");
 		// 只显示当前连接的地址，不要把电脑上所有网卡 IP 都列出来（截图/共享时容易泄露网络信息）
-		$("server-line").textContent = `${location.host}${health.auth ? " · 已加密钥" : ""}`;
+		$("server-line").textContent = `${location.host}${health.auth ? " · 已加密钥" : ""}${
+			health.bridge?.available ? " · 终端可接入" : ""
+		}`;
 		$("banner").classList.add("hidden");
 		renderHome();
 	} catch (err) {
@@ -522,7 +581,16 @@ function updateStatus() {
 	if (info.state?.thinkingLevel) strip.append(el("span", null, `· 思考:${info.state.thinkingLevel}`));
 	const ctx = info.stats?.contextUsage;
 	if (ctx?.percent != null) strip.append(el("span", null, `· ctx ${Math.round(ctx.percent)}%`));
-	if (info.mode) strip.append(el("span", null, `· ${info.mode === "new" ? "新会话" : info.mode === "copy" ? "副本" : "续接"}`));
+	// 桥接模式：手机连的是终端里那个 pi，两端同一个 agent，显示天然一致
+	if (info.mode === "bridge") {
+		strip.append(
+			el("span", "badge live", info.connected ? "已连终端" : "终端断开"),
+		);
+	} else if (info.mode) {
+		strip.append(
+			el("span", null, `· ${info.mode === "new" ? "新会话" : info.mode === "copy" ? "副本" : "续接"}`),
+		);
+	}
 	$("chat-title").textContent = info.state?.sessionName || info.label || "会话";
 	$("chat-sub").textContent = prettyCwd(info.cwd);
 	$("btn-stop").classList.toggle("hidden", info.status !== "streaming");
@@ -542,6 +610,11 @@ function handleAgentEvent(ev) {
 			updateStatus();
 		}
 		if (ev.type === "piapp_error") toast(ev.error);
+		// 桥接会话：整份历史快照（终端那边推过来的）
+		if (ev.type === "piapp_history") {
+			const entries = (ev.entries ?? []).filter((e) => e.message);
+			if (entries.length) renderChatEntries(entries);
+		}
 		return;
 	}
 
@@ -879,7 +952,8 @@ function leaveChat({ closeProcess = false } = {}) {
 /* --------------------------------------------------------------- 菜单功能 */
 
 function menuSheet() {
-	openSheet("会话操作", (body) => {
+	const isBridge = app.chat?.info?.mode === "bridge";
+	openSheet(isBridge ? "会话操作（已连终端）" : "会话操作", (body) => {
 		const grid = el("div", "grid");
 		const items = [
 			["⟳", "同步", () => syncChat()],
@@ -892,7 +966,8 @@ function menuSheet() {
 			["⧉", "开副本", () => openCopy()],
 			["📤", "导出", () => exportHtml()],
 			["ℹ️", "信息", () => infoSheet()],
-			["⏏", "关闭进程", () => closeProcessConfirm()],
+			// 桥接模式下不会杀掉终端的 pi，只是断开手机的连接
+			["⏏", isBridge ? "断开连接" : "关闭进程", () => closeProcessConfirm()],
 			["⚠️", "中断任务", () => abortRun()],
 		];
 		for (const [icon, label, fn] of items) {
@@ -1068,9 +1143,19 @@ function infoSheet() {
 		const rows = [
 			["工作目录", prettyCwd(info.cwd) || "—"],
 			["会话文件", info.sessionPath ?? "—"],
-			["来源会话", info.sourcePath && info.sourcePath !== info.sessionPath ? info.sourcePath : "（同一个文件）"],
+			[
+				"来源会话",
+				info.sourcePath && info.sourcePath !== info.sessionPath ? info.sourcePath : "（同一个文件）",
+			],
 			["会话 ID", info.sessionId ?? "—"],
-			["进入方式", { resume: "续接原会话", copy: "副本会话", new: "全新会话" }[info.mode] ?? info.mode],
+			[
+				"进入方式",
+				{ bridge: "连到终端的 pi", resume: "续接原会话", copy: "副本会话", new: "全新会话" }[info.mode] ??
+					info.mode,
+			],
+			...(info.mode === "bridge"
+				? [["终端 pi 进程", info.pid ? `pid ${info.pid}` : "—"]]
+				: []),
 			["运行状态", info.status],
 			["最后错误", info.lastError ?? "—"],
 			["手机地址", location.host],
@@ -1165,10 +1250,18 @@ async function openNew({ cwd, forceNewName = false }) {
 }
 
 async function closeProcessConfirm() {
-	if (!(await confirmDialog("关闭 agent 进程", "释放电脑上的这个 pi 进程（会话文件保留）。", "关闭"))) return;
+	const isBridge = app.chat?.info?.mode === "bridge";
+	const ok = isBridge
+		? await confirmDialog(
+				"断开与终端的连接",
+				"只是手机不再连这个会话；终端里的 pi 和你的任务都不受影响。",
+				"断开",
+		  )
+		: await confirmDialog("关闭 agent 进程", "释放电脑上的这个 pi 进程（会话文件保留）。", "关闭");
+	if (!ok) return;
 	const key = app.chat.key;
 	api(`/api/agents/${encodeURIComponent(key)}/close`, { method: "POST" }).catch(() => {});
-	toast("已关闭，会话文件已保留");
+	toast(isBridge ? "已断开，终端 pi 继续运行" : "已关闭，会话文件已保留");
 	history.back();
 }
 

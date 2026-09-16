@@ -174,10 +174,62 @@ function sessionTitle(s) {
   if (!p) return "(\u7A7A\u4F1A\u8BDD)";
   return p.length > 60 ? p.slice(0, 60) + "\u2026" : p;
 }
+function bridgeBanner() {
+  var _a2, _b2;
+  const b = (_a2 = app.health) == null ? void 0 : _a2.bridge;
+  if (!(b == null ? void 0 : b.available)) return null;
+  const alreadyOpen = [...app.running.values()].some((a) => a.mode === "bridge");
+  if (alreadyOpen) return null;
+  const box = el("div", "bridge-card");
+  const head = el("div", "bridge-head");
+  head.append(el("span", "badge live", "\u7EC8\u7AEF pi \u6B63\u5728\u8FD0\u884C"), el("span", "dim", `pid ${(_b2 = b.pid) != null ? _b2 : "?"}`));
+  box.append(head);
+  box.append(el("div", "bridge-cwd", prettyCwd(b.cwd) || b.cwd || "\u2014"));
+  box.append(
+    el("div", "bridge-hint", "\u63A5\u4E0A\u53BB\u7EE7\u7EED\u804A\u2014\u2014\u548C\u7EC8\u7AEF\u662F\u540C\u4E00\u4E2A agent\uFF0C\u4E24\u8FB9\u663E\u793A\u5B9E\u65F6\u4E00\u81F4")
+  );
+  box.addEventListener("click", () => enterTerminalSession());
+  return box;
+}
+async function enterTerminalSession() {
+  var _a2, _b2;
+  const b = (_a2 = app.health) == null ? void 0 : _a2.bridge;
+  if (!(b == null ? void 0 : b.available)) return toast("\u7EC8\u7AEF\u91CC\u6CA1\u6709\u53EF\u63A5\u5165\u7684 pi");
+  const box = $("messages");
+  box.replaceChildren(el("div", "msg note", "\u6B63\u5728\u63A5\u5165\u7EC8\u7AEF\u7684 pi\u2026"));
+  showView("chat");
+  app.chat = {
+    key: null,
+    label: "\u7EC8\u7AEF\u4F1A\u8BDD",
+    cwd: b.cwd,
+    info: { status: "starting", state: {}, cwd: b.cwd, mode: "bridge" },
+    nodes: /* @__PURE__ */ new Map(),
+    pending: /* @__PURE__ */ new Map(),
+    callCards: /* @__PURE__ */ new Map(),
+    toolResults: /* @__PURE__ */ new Map()
+  };
+  history.pushState({ view: "chat" }, "", chatUrl(null));
+  try {
+    const { agent } = await api("/api/agents/open", {
+      method: "POST",
+      body: JSON.stringify({ sessionPath: b.sessionFile, cwd: b.cwd })
+    });
+    app.chat.key = agent.key;
+    app.chat.info = { ...agent, label: ((_b2 = agent.state) == null ? void 0 : _b2.sessionName) || "\u7EC8\u7AEF\u4F1A\u8BDD" };
+    app.chat.label = app.chat.info.label;
+    history.replaceState({ view: "chat" }, "", chatUrl(agent.key));
+    await attachToBridge(agent.key);
+    loadRunning();
+  } catch (err) {
+    box.replaceChildren(el("div", "msg err", `\u63A5\u5165\u5931\u8D25\uFF1A${err.message}`));
+  }
+}
 function renderHome() {
   const wrap = $("projects");
   wrap.replaceChildren();
   const q = app.search.trim().toLowerCase();
+  const card = bridgeBanner();
+  if (card) wrap.append(card);
   let total = 0;
   for (const project of app.catalog.projects) {
     const sessions = project.sessions.filter((s) => {
@@ -228,11 +280,12 @@ function renderHome() {
   $("home-empty").classList.toggle("hidden", total > 0);
 }
 async function loadCatalog() {
+  var _a2;
   try {
-    app.catalog = await api("/api/catalog");
     const health = await api("/api/health");
     app.health = health;
-    $("server-line").textContent = `${location.host}${health.auth ? " \xB7 \u5DF2\u52A0\u5BC6\u94A5" : ""}`;
+    app.catalog = await api("/api/catalog");
+    $("server-line").textContent = `${location.host}${health.auth ? " \xB7 \u5DF2\u52A0\u5BC6\u94A5" : ""}${((_a2 = health.bridge) == null ? void 0 : _a2.available) ? " \xB7 \u7EC8\u7AEF\u53EF\u63A5\u5165" : ""}`;
     $("banner").classList.add("hidden");
     renderHome();
   } catch (err) {
@@ -450,14 +503,22 @@ function updateStatus() {
   if ((_d = info.state) == null ? void 0 : _d.thinkingLevel) strip.append(el("span", null, `\xB7 \u601D\u8003:${info.state.thinkingLevel}`));
   const ctx = (_e = info.stats) == null ? void 0 : _e.contextUsage;
   if ((ctx == null ? void 0 : ctx.percent) != null) strip.append(el("span", null, `\xB7 ctx ${Math.round(ctx.percent)}%`));
-  if (info.mode) strip.append(el("span", null, `\xB7 ${info.mode === "new" ? "\u65B0\u4F1A\u8BDD" : info.mode === "copy" ? "\u526F\u672C" : "\u7EED\u63A5"}`));
+  if (info.mode === "bridge") {
+    strip.append(
+      el("span", "badge live", info.connected ? "\u5DF2\u8FDE\u7EC8\u7AEF" : "\u7EC8\u7AEF\u65AD\u5F00")
+    );
+  } else if (info.mode) {
+    strip.append(
+      el("span", null, `\xB7 ${info.mode === "new" ? "\u65B0\u4F1A\u8BDD" : info.mode === "copy" ? "\u526F\u672C" : "\u7EED\u63A5"}`)
+    );
+  }
   $("chat-title").textContent = ((_f = info.state) == null ? void 0 : _f.sessionName) || info.label || "\u4F1A\u8BDD";
   $("chat-sub").textContent = prettyCwd(info.cwd);
   $("btn-stop").classList.toggle("hidden", info.status !== "streaming");
   $("btn-send").classList.toggle("hidden", info.status === "streaming");
 }
 function handleAgentEvent(ev) {
-  var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j;
+  var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k;
   const chat = app.chat;
   if (!chat) return;
   const box = $("messages");
@@ -468,6 +529,10 @@ function handleAgentEvent(ev) {
       updateStatus();
     }
     if (ev.type === "piapp_error") toast(ev.error);
+    if (ev.type === "piapp_history") {
+      const entries = ((_a2 = ev.entries) != null ? _a2 : []).filter((e) => e.message);
+      if (entries.length) renderChatEntries(entries);
+    }
     return;
   }
   switch (ev.type) {
@@ -492,7 +557,7 @@ function handleAgentEvent(ev) {
         chat.streaming = { key, node, holder, text: "", thinking: "", tools: /* @__PURE__ */ new Map() };
         if (app.stick) box.scrollTop = box.scrollHeight;
       } else if ((msg == null ? void 0 : msg.role) === "user") {
-        const text = typeof msg.content === "string" ? msg.content : ((_a2 = msg.content) != null ? _a2 : []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+        const text = typeof msg.content === "string" ? msg.content : ((_b2 = msg.content) != null ? _b2 : []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
         if (text.trim()) {
           const key = `live-u-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
           const node = el("div", "msg user");
@@ -511,7 +576,7 @@ function handleAgentEvent(ev) {
       const d = ev.assistantMessageEvent;
       if (!d || !chat.streaming) break;
       if (d.type === "text_delta") {
-        chat.streaming.text += (_b2 = d.delta) != null ? _b2 : "";
+        chat.streaming.text += (_c = d.delta) != null ? _c : "";
         let body = chat.streaming.node.querySelector(".md:last-of-type");
         if (!body) {
           body = el("div", "md");
@@ -520,7 +585,7 @@ function handleAgentEvent(ev) {
         body.innerHTML = md(chat.streaming.text);
         if (app.stick) box.scrollTop = box.scrollHeight;
       } else if (d.type === "thinking_delta") {
-        chat.streaming.thinking += (_c = d.delta) != null ? _c : "";
+        chat.streaming.thinking += (_d = d.delta) != null ? _d : "";
         let det = chat.streaming.node.querySelector("details.thinking");
         if (!det) {
           det = el("details", "thinking");
@@ -550,7 +615,7 @@ function handleAgentEvent(ev) {
       const target = chat.streaming.node;
       target.replaceChildren();
       renderAssistantContent(target, msg.content);
-      for (const [callId, result] of (_d = chat.toolResults) != null ? _d : []) {
+      for (const [callId, result] of (_e = chat.toolResults) != null ? _e : []) {
         const card = chat.callCards.get(callId);
         if (card) setToolResult(card, result);
       }
@@ -579,7 +644,7 @@ function handleAgentEvent(ev) {
       break;
     }
     case "queue_update":
-      chat.info.pending = { steering: (_e = ev.steering) != null ? _e : [], followUp: (_f = ev.followUp) != null ? _f : [] };
+      chat.info.pending = { steering: (_f = ev.steering) != null ? _f : [], followUp: (_g = ev.followUp) != null ? _g : [] };
       updateStatus();
       break;
     case "compaction_start":
@@ -589,15 +654,15 @@ function handleAgentEvent(ev) {
       if (ev.result) box.append(el("div", "msg note", `\u25A3 \u4E0A\u4E0B\u6587\u538B\u7F29\u5B8C\u6210\uFF08${ev.result.tokensBefore} tokens\uFF09`));
       break;
     case "auto_retry_start":
-      box.append(el("div", "msg note", `\u21BB \u81EA\u52A8\u91CD\u8BD5 ${ev.attempt}/${ev.maxAttempts}\uFF1A${(_g = ev.errorMessage) != null ? _g : ""}`));
+      box.append(el("div", "msg note", `\u21BB \u81EA\u52A8\u91CD\u8BD5 ${ev.attempt}/${ev.maxAttempts}\uFF1A${(_h = ev.errorMessage) != null ? _h : ""}`));
       break;
     case "extension_error":
-      box.append(el("div", "msg note", `\u26A0 \u6269\u5C55\u9519\u8BEF\uFF1A${(_h = ev.error) != null ? _h : ""}`));
+      box.append(el("div", "msg note", `\u26A0 \u6269\u5C55\u9519\u8BEF\uFF1A${(_i = ev.error) != null ? _i : ""}`));
       break;
     case "turn_end": {
-      const usage = (_i = ev.message) == null ? void 0 : _i.usage;
+      const usage = (_j = ev.message) == null ? void 0 : _j.usage;
       if (usage) {
-        chat.info.stats = { ...(_j = chat.info.stats) != null ? _j : {}, lastUsage: usage };
+        chat.info.stats = { ...(_k = chat.info.stats) != null ? _k : {}, lastUsage: usage };
         updateStatus();
       }
       break;
@@ -791,7 +856,9 @@ function leaveChat({ closeProcess = false } = {}) {
   loadRunning();
 }
 function menuSheet() {
-  openSheet("\u4F1A\u8BDD\u64CD\u4F5C", (body) => {
+  var _a2, _b2;
+  const isBridge = ((_b2 = (_a2 = app.chat) == null ? void 0 : _a2.info) == null ? void 0 : _b2.mode) === "bridge";
+  openSheet(isBridge ? "\u4F1A\u8BDD\u64CD\u4F5C\uFF08\u5DF2\u8FDE\u7EC8\u7AEF\uFF09" : "\u4F1A\u8BDD\u64CD\u4F5C", (body) => {
     const grid = el("div", "grid");
     const items = [
       ["\u27F3", "\u540C\u6B65", () => syncChat()],
@@ -804,7 +871,8 @@ function menuSheet() {
       ["\u29C9", "\u5F00\u526F\u672C", () => openCopy()],
       ["\u{1F4E4}", "\u5BFC\u51FA", () => exportHtml()],
       ["\u2139\uFE0F", "\u4FE1\u606F", () => infoSheet()],
-      ["\u23CF", "\u5173\u95ED\u8FDB\u7A0B", () => closeProcessConfirm()],
+      // 桥接模式下不会杀掉终端的 pi，只是断开手机的连接
+      ["\u23CF", isBridge ? "\u65AD\u5F00\u8FDE\u63A5" : "\u5173\u95ED\u8FDB\u7A0B", () => closeProcessConfirm()],
       ["\u26A0\uFE0F", "\u4E2D\u65AD\u4EFB\u52A1", () => abortRun()]
     ];
     for (const [icon, label, fn] of items) {
@@ -979,9 +1047,16 @@ function infoSheet() {
     const rows = [
       ["\u5DE5\u4F5C\u76EE\u5F55", prettyCwd(info.cwd) || "\u2014"],
       ["\u4F1A\u8BDD\u6587\u4EF6", (_a2 = info.sessionPath) != null ? _a2 : "\u2014"],
-      ["\u6765\u6E90\u4F1A\u8BDD", info.sourcePath && info.sourcePath !== info.sessionPath ? info.sourcePath : "\uFF08\u540C\u4E00\u4E2A\u6587\u4EF6\uFF09"],
+      [
+        "\u6765\u6E90\u4F1A\u8BDD",
+        info.sourcePath && info.sourcePath !== info.sessionPath ? info.sourcePath : "\uFF08\u540C\u4E00\u4E2A\u6587\u4EF6\uFF09"
+      ],
       ["\u4F1A\u8BDD ID", (_b2 = info.sessionId) != null ? _b2 : "\u2014"],
-      ["\u8FDB\u5165\u65B9\u5F0F", (_c = { resume: "\u7EED\u63A5\u539F\u4F1A\u8BDD", copy: "\u526F\u672C\u4F1A\u8BDD", new: "\u5168\u65B0\u4F1A\u8BDD" }[info.mode]) != null ? _c : info.mode],
+      [
+        "\u8FDB\u5165\u65B9\u5F0F",
+        (_c = { bridge: "\u8FDE\u5230\u7EC8\u7AEF\u7684 pi", resume: "\u7EED\u63A5\u539F\u4F1A\u8BDD", copy: "\u526F\u672C\u4F1A\u8BDD", new: "\u5168\u65B0\u4F1A\u8BDD" }[info.mode]) != null ? _c : info.mode
+      ],
+      ...info.mode === "bridge" ? [["\u7EC8\u7AEF pi \u8FDB\u7A0B", info.pid ? `pid ${info.pid}` : "\u2014"]] : [],
       ["\u8FD0\u884C\u72B6\u6001", info.status],
       ["\u6700\u540E\u9519\u8BEF", (_d = info.lastError) != null ? _d : "\u2014"],
       ["\u624B\u673A\u5730\u5740", location.host],
@@ -1070,11 +1145,18 @@ async function openNew({ cwd, forceNewName = false }) {
   }
 }
 async function closeProcessConfirm() {
-  if (!await confirmDialog("\u5173\u95ED agent \u8FDB\u7A0B", "\u91CA\u653E\u7535\u8111\u4E0A\u7684\u8FD9\u4E2A pi \u8FDB\u7A0B\uFF08\u4F1A\u8BDD\u6587\u4EF6\u4FDD\u7559\uFF09\u3002", "\u5173\u95ED")) return;
+  var _a2, _b2;
+  const isBridge = ((_b2 = (_a2 = app.chat) == null ? void 0 : _a2.info) == null ? void 0 : _b2.mode) === "bridge";
+  const ok = isBridge ? await confirmDialog(
+    "\u65AD\u5F00\u4E0E\u7EC8\u7AEF\u7684\u8FDE\u63A5",
+    "\u53EA\u662F\u624B\u673A\u4E0D\u518D\u8FDE\u8FD9\u4E2A\u4F1A\u8BDD\uFF1B\u7EC8\u7AEF\u91CC\u7684 pi \u548C\u4F60\u7684\u4EFB\u52A1\u90FD\u4E0D\u53D7\u5F71\u54CD\u3002",
+    "\u65AD\u5F00"
+  ) : await confirmDialog("\u5173\u95ED agent \u8FDB\u7A0B", "\u91CA\u653E\u7535\u8111\u4E0A\u7684\u8FD9\u4E2A pi \u8FDB\u7A0B\uFF08\u4F1A\u8BDD\u6587\u4EF6\u4FDD\u7559\uFF09\u3002", "\u5173\u95ED");
+  if (!ok) return;
   const key = app.chat.key;
   api(`/api/agents/${encodeURIComponent(key)}/close`, { method: "POST" }).catch(() => {
   });
-  toast("\u5DF2\u5173\u95ED\uFF0C\u4F1A\u8BDD\u6587\u4EF6\u5DF2\u4FDD\u7559");
+  toast(isBridge ? "\u5DF2\u65AD\u5F00\uFF0C\u7EC8\u7AEF pi \u7EE7\u7EED\u8FD0\u884C" : "\u5DF2\u5173\u95ED\uFF0C\u4F1A\u8BDD\u6587\u4EF6\u5DF2\u4FDD\u7559");
   history.back();
 }
 async function abortRun() {

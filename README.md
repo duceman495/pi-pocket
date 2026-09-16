@@ -7,6 +7,55 @@
                                             └─每次进入会话 spawn 一个 pi --mode rpc 进程
 ```
 
+## 两种模式：独立进程 / 接入终端（推荐）
+
+Pi Pocket 有两种工作方式，打开会话时**自动选择**：
+
+| | 独立进程模式 | **接入终端模式** |
+| --- | --- | --- |
+| 前提 | 无（默认回退） | 终端里跑着 pi 且装了桥接扩展 |
+| agent 进程 | 手机每开一个会话就新起一个 | 只有终端那一个，手机是它的客户端 |
+| 电脑与手机 | ⚠️ 各跑一个进程，**两边不同步**，且可能互相覆盖会话文件 | ✅ 同一个 agent，**两端实时一致** |
+| 手机能看到 | 重读会话文件重建（完整） | 与终端完全一致 |
+| 终端能看到 | 只有自己那之后的消息 | 手机发的消息实时出现在终端界面 |
+
+**想要 dsh 那种电脑手机同步显示，用接入终端模式：**
+
+```bash
+npm run install-bridge     # 一次性：装桥接扩展到 ~/.pi/agent/extensions/
+pi                         # 之后正常启动 pi 即可，无需额外参数
+node server.mjs            # 另开一个终端跑 Pi Pocket 服务（或 ./tools/run.sh）
+```
+
+手机打开 Pi Pocket，首页顶部会出现绿色的 **「终端 pi 正在运行」** 卡片，点一下即接入。
+之后终端和手机就是同一个 agent 的两个视图：任意一端发消息、看流式输出、看工具调用，
+另一端都同步显示。
+
+### 它是怎么做到的
+
+```
+              ┌─────────────────────────────┐
+   终端 TUI ──│  pi 进程（唯一的 agent）     │
+  （原生界面） │   └ pi-pocket-bridge 扩展    │
+              └──────────────┬──────────────┘
+                             │ WebSocket 127.0.0.1:8788
+                    ┌────────┴────────┐
+                    │  Pi Pocket 8787 │
+                    └────────┬────────┘
+                             │ WebSocket
+                       手机 / 平板 / 其它浏览器
+```
+
+桥接扩展**不依赖任何 npm 包**（扩展经 jiti 加载，解析不到 pi 的 node_modules，
+所以 `import("ws")` 会失败；这里用 node:http 手写了 WebSocket 服务端）。
+协议见 [docs/bridge-protocol.md](docs/bridge-protocol.md)。
+
+### 注意事项
+
+- 桥接端口固定 8788，同时只有一个 pi 实例能提供桥接（第二个会探测到端口占用并自动跳过）。
+- 终端用 `--no-session` 启动时没有会话文件，无法对应到具体会话，桥接不生效。
+- 手机上「断开连接」只是停止监听，**不会杀掉你终端里的 pi**。
+
 ## 为什么不是微信小程序
 
 微信小程序**正式版不能**用局域网 IP + `http`/`ws` 明文通信：`request`/`connectSocket`
@@ -118,11 +167,16 @@ PI_POCKET_TOKEN=$(openssl rand -hex 12) node server.mjs --qr
 ## 自检
 
 ```bash
-node server.mjs &                 # 先起服务
-node tools/ui-check.mjs 8787      # 首页/进入/返回/深链/菜单（24 项断言）
-node tools/ui-check.mjs 8787 legacy=1   # 同一套断言跑降级包
-node tools/send-check.mjs 8787 0  # 真发一条消息，验证流式/工具卡片（会消耗 token）
-./tools/android-netcheck.sh       # 安卓的局域网发现逻辑（JVM 直接跑，不需要设备）
+node server.mjs &                       # 先起服务
+node tools/ui-check.mjs 8787            # 首页/进入/返回/深链/菜单（24 项）
+node tools/ui-check.mjs 8787 legacy=1   # 同一套断言跑降级包（24 项）
+node tools/send-check.mjs 8787 0        # 真发消息验证流式/工具卡片（消耗 token）
+./tools/android-netcheck.sh             # 安卓局域网发现逻辑（JVM 直接跑，无需设备）
+
+# 同步相关（需要先 ./tools/bridge-check.sh 起终端 pi + 服务）
+./tools/bridge-check.sh                 # 终端 pi（带桥接）+ Pi Pocket 服务
+node tools/bridge-sync-check.mjs 8787   # 接入终端同一 agent、不新起进程（17 项）
+node tools/bridge-multiclient-check.mjs 8787  # 多端广播、两端显示一致（9 项）
 ```
 
 Android 端到端自检见 [android/README.md](android/README.md)（模拟器里穿透 WebView 检查，17 项）。

@@ -2,7 +2,10 @@
 /**
  * Pi Pocket 服务端
  *
- *  手机浏览器 ──HTTP/WS──> 本机 8787 ──spawn/RPC──> pi agent 进程（每个会话一个）
+ * 两种接入方式：
+ *   1. 终端里已经在跑 pi（装了 pi-pocket-bridge 扩展）→ 直接桥接，不 spawn 新进程，
+ *      终端与手机共用同一个 agent，两端显示天然一致。
+ *   2. 终端没有 pi → 自己 spawn 一个 `pi --mode rpc`。
  */
 import http from "node:http";
 import { createReadStream, existsSync, statSync } from "node:fs";
@@ -12,6 +15,8 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { agentManager, RUNTIME_INFO } from "./src/agent-manager.mjs";
 import { listCatalog } from "./src/session-catalog.mjs";
+import { TuiHub, probeBridge } from "./src/tui-hub.mjs";
+import { DEFAULT_BRIDGE_PORT } from "./src/bridge-client.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -22,6 +27,16 @@ const hostArg = args.find((a) => a.startsWith("--host="));
 const PORT = Number(portArg?.split("=")[1] ?? process.env.PI_POCKET_PORT ?? 8787);
 const HOST = hostArg?.split("=")[1] ?? process.env.PI_POCKET_HOST ?? "0.0.0.0";
 const TOKEN = process.env.PI_POCKET_TOKEN ?? null;
+const ENABLE_BRIDGE = process.env.PI_POCKET_BRIDGE !== "0";
+
+/** 桥接会话（连终端里的 pi）集中管理：一条会话一个 hub */
+const hubs = new Map(); // key -> TuiHub
+
+/**
+ * 桥接会话的 key。必须与 TuiHub.keyFor() 保持一致 ——
+ * 前端拿这个 key 去连 WS，两边算法不一致就会「该会话未打开」。
+ */
+const bridgeKeyFor = (hello) => `bridge-${hello.sessionId}`;
 
 const MIME = {
 	".html": "text/html; charset=utf-8",
@@ -87,6 +102,7 @@ const server = http.createServer(async (req, res) => {
 
 	try {
 		if (path === "/api/health" && req.method === "GET") {
+			const bridge = ENABLE_BRIDGE ? await probeBridge() : null;
 			return json(res, 200, {
 				ok: true,
 				host: HOST,
@@ -94,6 +110,19 @@ const server = http.createServer(async (req, res) => {
 				lan: lanAddresses(),
 				auth: Boolean(TOKEN),
 				runtime: RUNTIME_INFO,
+				// 终端有 pi 在跑时，手机可以直接连上去（两端同一个 agent，显示一致）
+				bridge: bridge
+					? {
+							available: true,
+							port: DEFAULT_BRIDGE_PORT,
+							sessionFile: bridge.sessionFile,
+							sessionId: bridge.sessionId,
+							cwd: bridge.cwd,
+							pid: bridge.pid,
+							model: bridge.model,
+							isIdle: bridge.isIdle,
+						  }
+					: { available: false, port: DEFAULT_BRIDGE_PORT },
 			});
 		}
 
@@ -106,11 +135,38 @@ const server = http.createServer(async (req, res) => {
 			}
 
 			if (path === "/api/agents" && req.method === "GET") {
-				return json(res, 200, { agents: agentManager.list() });
+				return json(res, 200, {
+					agents: [
+						...agentManager.list(),
+						...[...hubs.values()].filter((h) => h.conn).map((h) => h.snapshot()),
+					],
+				});
 			}
 
 			if (path === "/api/agents/open" && req.method === "POST") {
 				const body = await readBody(req);
+
+				// 先看终端里是不是已经开着这个会话：能桥接就用桥接（同一个 agent，两端一致）
+				if (ENABLE_BRIDGE && !body.forceNew && !body.copy) {
+					const hello = await probeBridge();
+					const matches =
+						hello?.sessionFile === body.sessionPath ||
+						(!body.sessionPath && !!body.cwd && hello?.cwd === body.cwd);
+					if (matches) {
+						const hubKey = bridgeKeyFor(hello);
+						let hub = hubs.get(hubKey);
+						if (hub?.conn) {
+							return json(res, 200, { agent: hub.snapshot(), reused: true, bridged: true });
+						}
+						hub = new TuiHub();
+						hub.hello = hello;
+						hub.key = hubKey;
+						await hub.connect();
+						hubs.set(hubKey, hub);
+						return json(res, 200, { agent: hub.snapshot(), reused: false, bridged: true });
+					}
+				}
+
 				const { bridge, reused } = await agentManager.open({
 					sessionPath: body.sessionPath,
 					cwd: body.cwd,
@@ -124,6 +180,13 @@ const server = http.createServer(async (req, res) => {
 			const closeMatch = path.match(/^\/api\/agents\/(.+)\/close$/);
 			if (closeMatch && req.method === "POST") {
 				const key = decodeURIComponent(closeMatch[1]);
+				const hub = hubs.get(key);
+				if (hub) {
+					// 桥接只是断开监听，终端里的 pi 继续跑
+					await hub.shutdown();
+					hubs.delete(key);
+					return json(res, 200, { ok: true, note: "已断开桥接，终端 pi 继续运行" });
+				}
 				const ok = await agentManager.close(key);
 				return json(res, ok ? 200 : 404, { ok });
 			}
@@ -207,7 +270,8 @@ const PASSTHROUGH = new Set([
 ]);
 
 function attachClient(ws, key) {
-	const bridge = key ? agentManager.get(decodeURIComponent(key)) : null;
+	const decoded = key ? decodeURIComponent(key) : null;
+	const bridge = decoded ? (hubs.get(decoded) ?? agentManager.get(decoded)) : null;
 	if (!bridge) {
 		ws.send(JSON.stringify({ type: "fatal", error: "该会话未打开或已关闭" }));
 		ws.close();

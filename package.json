@@ -24,7 +24,10 @@
     "check:android": "./tools/android-netcheck.sh",
     "demo:data": "node tools/demo-data.mjs",
     "demo:serve": "PI_CODING_AGENT_DIR=$HOME/pi-pocket-demo/.state/agent node server.mjs --port=8899",
-    "demo:shots": "node tools/ui-check.mjs 8899 \"\" demo"
+    "demo:shots": "node tools/ui-check.mjs 8899 \"\" demo",
+    "install-bridge": "./tools/install-bridge.sh",
+    "check:bridge": "node tools/bridge-sync-check.mjs",
+    "check:multiclient": "node tools/bridge-multiclient-check.mjs"
   },
   "engines": {
     "node": ">=22"
