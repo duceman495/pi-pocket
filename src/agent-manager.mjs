@@ -32,21 +32,23 @@ const CLI = process.env.PI_POCKET_CLI ?? `${getPackageDir()}/dist/cli.js`;
  */
 function terminalPiCount() {
 	try {
-		const out = execFileSync("pgrep", ["-x", "pi"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-		const pids = out.split("\n").map((x) => x.trim()).filter(Boolean).map(Number);
+		// 用 ps 而不是 pgrep -x pi：macOS 上 pgrep -x 会漏（实测同一台机器上
+		// 两个同样叫 pi 的进程只返回一个），ps 的 comm 列是可靠的。
+		const out = execFileSync("ps", ["-Ao", "pid=,ppid=,comm="], { encoding: "utf8" });
 		let count = 0;
-		for (const pid of pids) {
-			try {
-				// 父进程是本服务的，就是手机自己开的 agent，不算
-				const ppid = Number(execFileSync("ps", ["-p", String(pid), "-o", "ppid="], { encoding: "utf8" }).trim());
-				if (ppid !== process.pid) count++;
-			} catch {
-				/* ignore */
-			}
+		for (const line of out.split("\n")) {
+			const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+			if (!m) continue;
+			const [, , ppid, comm] = m;
+			// pi 的可执行文件名就是 pi
+			if (comm.trim() !== "pi") continue;
+			// 父进程是本服务的 = 手机自己开的 agent，不算
+			if (Number(ppid) === process.pid) continue;
+			count++;
 		}
 		return count;
 	} catch {
-		return 0; // pgrep 无匹配时退出码非 0
+		return 0;
 	}
 }
 

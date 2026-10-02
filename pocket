@@ -206,7 +206,8 @@ cmd_status() {
 # 解释"为什么没有桥接"，并按情况给出该做什么
 diagnose_no_bridge() {
 	local pi_count
-	pi_count="$(pgrep -f 'pi$' 2>/dev/null | wc -l | tr -d ' ')"
+	# 用 ps 而不是 pgrep -x pi：macOS 上 pgrep -x 会漏（同一台机器两个 pi 只返回一个）
+	pi_count="$(ps -Ao comm= 2>/dev/null | awk '$1=="pi"' | wc -l | tr -d ' ')"
 	# 有进程占着桥接目录里的 socket，但目录里没有对应文件 = 文件被外部删了
 	local orphan
 	orphan="$(lsof -nP 2>/dev/null | grep -c "pi-pocket-bridge/.*\.sock" || true)"
