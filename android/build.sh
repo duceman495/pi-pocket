@@ -18,6 +18,11 @@ OUT_APK="$DIST/pi-pocket.apk"
 : "${ANDROID_HOME:=$HOME/android-sdk}"
 export ANDROID_HOME
 
+# 版本号只从 package.json 读，避免 build.sh / package.json / 代码里三处漂移
+VERSION="$(node -p "require('$ROOT/../package.json').version" 2>/dev/null || echo 0.0.0)"
+# versionCode 必须是递增整数：把 0.2.0 变成 200 这样的形式
+VERSION_CODE="$(node -p "const v=require('$ROOT/../package.json').version.split('.').map(Number); (v[0]||0)*10000+(v[1]||0)*100+(v[2]||0)" 2>/dev/null || echo 1)"
+
 BT="$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -1)"
 PLATFORM="$(ls -d "$ANDROID_HOME"/platforms/android-* 2>/dev/null | sort -V | tail -1)"
 ANDROID_JAR="$PLATFORM/android.jar"
@@ -39,6 +44,16 @@ echo "== 清理"
 rm -rf "$BUILD"
 mkdir -p "$BUILD/compiled" "$BUILD/gen" "$BUILD/classes" "$DIST"
 
+echo "== 版本 ${VERSION} (code ${VERSION_CODE})"
+
+# manifest 里显式写死的 versionCode/versionName 会覆盖 aapt2 的 --version-* 参数，
+# 所以直接把 manifest 改成当前版本（改完原样还原，不污染工作区）
+MANIFEST="$APP/src/main/AndroidManifest.xml"
+cp "$MANIFEST" "$MANIFEST.orig"
+sed -i.bak -E "s/android:versionCode=\"[0-9]+\"/android:versionCode=\"${VERSION_CODE}\"/; s/android:versionName=\"[0-9.]+\"/android:versionName=\"${VERSION}\"/" "$MANIFEST"
+rm -f "$MANIFEST.bak"
+restore_manifest() { mv -f "$MANIFEST.orig" "$MANIFEST" 2>/dev/null || true; }
+trap restore_manifest EXIT
 echo "== aapt2 compile 资源"
 "$AAPT2" compile --dir "$APP/src/main/res" -o "$BUILD/compiled/res.zip"
 
@@ -50,9 +65,13 @@ echo "== aapt2 link（生成带资源的 APK 骨架 + R.java）"
   --java "$BUILD/gen" \
   --min-sdk-version 24 \
   --target-sdk-version 35 \
-  --version-code 1 --version-name 0.1.0 \
+  --version-code "$VERSION_CODE" --version-name "$VERSION" \
   --no-version-vectors \
   "$BUILD/compiled/res.zip"
+
+# 让代码里的 APP_VERSION 和 package.json 保持一致
+sed -i.bak -E "s/APP_VERSION = \"[0-9.]+\"/APP_VERSION = \"${VERSION}\"/" \
+  "$APP/src/main/java/com/pipocket/WebActivity.java" && rm -f "$APP/src/main/java/com/pipocket/WebActivity.java.bak"
 
 echo "== javac 编译 Java 源码"
 find "$APP/src/main/java" "$BUILD/gen" -name '*.java' > "$BUILD/sources.txt"

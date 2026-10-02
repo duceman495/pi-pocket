@@ -1,6 +1,6 @@
 {
   "name": "pi-pocket",
-  "version": "0.3.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "手机连上同局域网电脑的 Pi Agent：浏览/进入电脑上所有 pi 会话（手机浏览器 PWA + Android APK）",
