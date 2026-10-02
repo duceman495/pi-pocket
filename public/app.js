@@ -167,6 +167,9 @@ function chatUrl(agentKey) {
 /** 深链目标（首屏带着 ?a= 打开时用） */
 const bootKey = params.get("a");
 
+/** 是否运行在 Android App 里（App 会注入 PiPocketNative） */
+const IN_APP = typeof window.PiPocketNative !== "undefined";
+
 const app = {
 	health: null,
 	catalog: { projects: [], sessions: [] },
@@ -970,6 +973,11 @@ function menuSheet() {
 			["⏏", isBridge ? "断开连接" : "关闭进程", () => closeProcessConfirm()],
 			["⚠️", "中断任务", () => abortRun()],
 		];
+		// 在 App 内才有的入口：改电脑地址 / 重新扫描
+		if (IN_APP) {
+			items.push(["🔌", "连接设置", () => window.PiPocketNative.openSettings()]);
+			items.push(["↻", "重连", () => window.PiPocketNative.reconnect()]);
+		}
 		for (const [icon, label, fn] of items) {
 			const b = el("button", "grid-item" + (label.includes("中断") ? " danger" : ""));
 			b.append(el("span", null, icon), el("span", null, label));

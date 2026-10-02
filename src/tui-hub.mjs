@@ -10,7 +10,7 @@
  */
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
-import { bridgeKey, probeBridge, DEFAULT_BRIDGE_PORT } from "./bridge-client.mjs";
+import { findBridgeForSession, listBridges, anyBridge } from "./bridge-client.mjs";
 
 const RECENT_TURNS = 60;
 /** 浏览器本地命令 → 桥接命令 的映射 */
@@ -26,8 +26,9 @@ const BRIDGE_COMMANDS = new Set([
 ]);
 
 export class TuiHub {
-	constructor(port = DEFAULT_BRIDGE_PORT) {
-		this.port = port;
+	/** @param {string} socketPath 该 pi 实例的 unix socket 路径 */
+	constructor(socketPath) {
+		this.socketPath = socketPath;
 		/** 桥接 hello（同一个 pi 实例，所有桥接会话共用） */
 		this.hello = null;
 		/** 这个会话文件对应的客户端连接（到扩展的 WebSocket） */
@@ -48,29 +49,13 @@ export class TuiHub {
 
 	/* ------------------------------ 对外查询 ------------------------------ */
 
-	/** 探测是否有可桥接的 pi，并判断是不是指定会话 */
-	async probe() {
-		const hello = await probeBridge(this.port);
-		this.hello = hello;
-		return hello;
-	}
-
-	/** 桥接 hello 对应的会话是否就是这一个 */
-	matches({ sessionPath, sessionId, cwd }) {
-		if (!this.hello?.sessionFile) return false;
-		if (sessionPath) return this.hello.sessionFile === sessionPath;
-		if (sessionId) return this.hello.sessionId === sessionId;
-		if (cwd) return this.hello.cwd === cwd;
-		return false;
-	}
-
 	/**
 	 * 会话 key。必须与 server.mjs 里登记 hub 时用的 key 完全一致，
 	 * 否则前端拿到 key 后按它连 WS 会查不到（该会话未打开）。
 	 */
 	keyFor() {
 		if (this.key) return this.key;
-		return this.hello?.sessionId ? `bridge-${this.hello.sessionId}` : bridgeKey(this.hello?.sessionFile);
+		return this.hello?.sessionId ? `bridge-${this.hello.sessionId}` : `bridge-${this.hello?.pid ?? "unknown"}`;
 	}
 
 	snapshot() {
@@ -125,7 +110,8 @@ export class TuiHub {
 
 	async #doConnect() {
 		const { default: WebSocketImpl } = await import("ws");
-		const ws = new WebSocketImpl(`ws://127.0.0.1:${this.port}`);
+		// 通过 unix socket 连到那个 pi 实例（ws 库的 ws+unix:// 语法）
+		const ws = new WebSocketImpl(`ws+unix://${this.socketPath}:/`);
 		this.conn = ws;
 		this.status = "connecting";
 
@@ -176,7 +162,7 @@ export class TuiHub {
 			this.status = this.idle ? "idle" : "streaming";
 			// key 只在首次确定（后续 hello 不能把 key 改掉，否则前端会失联）
 			if (!this.key) {
-				this.key = msg.sessionId ? `bridge-${msg.sessionId}` : bridgeKey(msg.sessionFile);
+				this.key = msg.sessionId ? `bridge-${msg.sessionId}` : `bridge-${msg.pid ?? this.hello?.pid ?? "unknown"}`;
 			}
 			this.#push({ type: "piapp_status", status: this.status });
 			return;
@@ -301,4 +287,4 @@ export class TuiHub {
 	}
 }
 
-export { probeBridge };
+export { listBridges, anyBridge, findBridgeForSession };

@@ -1,22 +1,25 @@
 /**
- * 桥接探测：发现终端里正在运行的 pi（通过 pi-pocket-bridge 扩展暴露的 WebSocket）。
+ * 桥接发现：找出电脑上所有正在运行的 pi，以及各自在跑哪个会话。
  *
- * 用于解决「同一个会话被开了两个 agent 进程」导致两端不同步的问题：
- * 如果能桥接到终端里的 pi，就不需要再 spawn 一个，手机直接成为那个 agent 的客户端。
+ * 每个 pi（装了 pi-pocket-bridge 扩展）会在 <agentDir>/pi-pocket-bridge/<pid>.sock
+ * 上监听。这里扫描该目录、逐个读 hello，就得到一张
+ * 「socket → 会话文件 / cwd / pid / 模型」的表。
+ *
+ * 为什么不用固定端口：见 extensions/pi-pocket-bridge.ts 顶部注释。简单说，
+ * 固定端口是先到先得，同时开几个 pi 时你想要的会话往往抢不到，而且
+ * Pi Pocket 自己 spawn 的 rpc 进程也会抢（那个进程根本不需要桥接）。
  */
-import { createHash } from "node:crypto";
+import { readdirSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
-export const DEFAULT_BRIDGE_PORT = Number(process.env.PI_POCKET_BRIDGE_PORT ?? 8788);
+export const BRIDGE_DIR = join(getAgentDir?.() ?? join(homedir(), ".pi", "agent"), "pi-pocket-bridge");
 const PROBE_TIMEOUT = 1200;
 
-/** 短连接探一下桥接是否活着，并取回 hello */
-export async function probeBridge(port = DEFAULT_BRIDGE_PORT, timeoutMs = PROBE_TIMEOUT) {
-	let WebSocketImpl;
-	try {
-		({ default: WebSocketImpl } = await import("ws"));
-	} catch {
-		return null;
-	}
+/** 用一个临时 Node 进程通过 unix socket 做 WebSocket 握手并读 hello（避免依赖 ws 客户端） */
+async function probeSocket(socketPath, timeoutMs = PROBE_TIMEOUT) {
+	const { default: WebSocketImpl } = await import("ws");
 	return new Promise((resolve) => {
 		let ws;
 		const done = (v) => {
@@ -30,7 +33,7 @@ export async function probeBridge(port = DEFAULT_BRIDGE_PORT, timeoutMs = PROBE_
 		};
 		const timer = setTimeout(() => done(null), timeoutMs);
 		try {
-			ws = new WebSocketImpl(`ws://127.0.0.1:${port}`);
+			ws = new WebSocketImpl(`ws+unix://${socketPath}:/`);
 		} catch {
 			return done(null);
 		}
@@ -47,25 +50,77 @@ export async function probeBridge(port = DEFAULT_BRIDGE_PORT, timeoutMs = PROBE_
 	});
 }
 
-/** 会话文件路径 → 稳定的短 key，用作前端 URL 片段 */
-export function bridgeKey(sessionFile, sessionId) {
-	const src = sessionFile ?? sessionId ?? "unknown";
-	return "bridge-" + createHash("sha1").update(String(src)).digest("hex").slice(0, 12);
+/** 列出所有还活着的桥接 socket 路径（顺手清理死 socket 文件） */
+export function listBridgeSockets(dir = BRIDGE_DIR) {
+	let names = [];
+	try {
+		names = readdirSync(dir).filter((n) => n.endsWith(".sock"));
+	} catch {
+		return []; // 目录不存在 = 没有 pi 装扩展
+	}
+	return names.map((n) => ({ name: n, path: join(dir, n), pid: Number(n.replace(/\.sock$/, "")) }));
+}
+
+function pidAlive(pid) {
+	if (!Number.isFinite(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (err) {
+		// EPERM 说明进程存在但没有权限发信号
+		return err?.code === "EPERM";
+	}
 }
 
 /**
- * 这个会话能不能桥接？
- * 只有 hello 里的 sessionFile 和当前会话对得上才算数 —— 否则手机上点开会话 A
- * 却连到了终端里的会话 B，那是错的。
+ * 发现所有可桥接的 pi。
+ * 返回 [{ socket, sessionFile, sessionId, cwd, pid, model, thinkingLevel, isIdle, mode }]
  */
-export async function matchBridge(port, { sessionPath, sessionId, cwd } = {}) {
-	const hello = await probeBridge(port);
-	if (!hello) return null;
-	if (!hello.sessionFile) return null; // 终端用了 --no-session，没有会话文件无法对应
-	const same =
-		(sessionPath && hello.sessionFile === sessionPath) ||
-		(!sessionPath && sessionId && hello.sessionId === sessionId) ||
-		(!sessionPath && !sessionId && cwd && hello.cwd === cwd);
-	if (!same) return null;
-	return hello;
+export async function listBridges(dir = BRIDGE_DIR) {
+	const sockets = listBridgeSockets(dir);
+	if (!sockets.length) return [];
+
+	const hellos = await Promise.all(
+		sockets.map(async (s) => {
+			// 进程已经没了就顺手把死 socket 清掉，免得目录越积越多
+			if (s.pid && !pidAlive(s.pid)) {
+				try {
+					rmSync(s.path, { force: true });
+				} catch {
+					/* ignore */
+				}
+				return null;
+			}
+			const hello = await probeSocket(s.path);
+			if (!hello) {
+				// 进程活着但连不上：可能正在启动，留着下一轮再试
+				return null;
+			}
+			return { socket: s.path, ...hello };
+		}),
+	);
+
+	return hellos.filter(Boolean);
 }
+
+/** 按会话精确匹配：哪个 pi 正在跑这个会话文件 */
+export async function findBridgeForSession({ sessionPath, sessionId, cwd }, dir = BRIDGE_DIR) {
+	const bridges = await listBridges(dir);
+	if (!bridges.length) return null;
+	if (sessionPath) {
+		// 优先按会话文件精确匹配；终端用 --no-session 时 sessionFile 为 null，不会误命中
+		return bridges.find((b) => b.sessionFile && b.sessionFile === sessionPath) ?? null;
+	}
+	if (sessionId) return bridges.find((b) => b.sessionId === sessionId) ?? null;
+	if (cwd) return bridges.find((b) => b.cwd === cwd) ?? null;
+	return null;
+}
+
+/** 有没有任何一个 pi 可以桥接（首页用来决定是否显示「终端 pi 正在运行」卡片） */
+export async function anyBridge(dir = BRIDGE_DIR) {
+	const bridges = await listBridges(dir);
+	// 优先返回 TUI 模式的（那才是用户真正在终端里用的）
+	return bridges.find((b) => b.mode === "tui") ?? bridges[0] ?? null;
+}
+
+export { probeSocket };

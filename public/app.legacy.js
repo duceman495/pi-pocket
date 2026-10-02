@@ -136,6 +136,7 @@ function chatUrl(agentKey) {
   return location.pathname + (q ? `?${q}` : "");
 }
 const bootKey = params.get("a");
+const IN_APP = typeof window.PiPocketNative !== "undefined";
 const app = {
   health: null,
   catalog: { projects: [], sessions: [] },
@@ -875,6 +876,10 @@ function menuSheet() {
       ["\u23CF", isBridge ? "\u65AD\u5F00\u8FDE\u63A5" : "\u5173\u95ED\u8FDB\u7A0B", () => closeProcessConfirm()],
       ["\u26A0\uFE0F", "\u4E2D\u65AD\u4EFB\u52A1", () => abortRun()]
     ];
+    if (IN_APP) {
+      items.push(["\u{1F50C}", "\u8FDE\u63A5\u8BBE\u7F6E", () => window.PiPocketNative.openSettings()]);
+      items.push(["\u21BB", "\u91CD\u8FDE", () => window.PiPocketNative.reconnect()]);
+    }
     for (const [icon, label, fn] of items) {
       const b = el("button", "grid-item" + (label.includes("\u4E2D\u65AD") ? " danger" : ""));
       b.append(el("span", null, icon), el("span", null, label));

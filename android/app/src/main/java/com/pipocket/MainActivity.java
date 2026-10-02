@@ -26,6 +26,9 @@ import java.util.List;
  */
 public class MainActivity extends Activity {
 
+	/** 由 WebActivity 打开时带上，表示"这是从 App 内进设置页" */
+	public static final String EXTRA_FROM_APP = "from_app";
+
 	public static final String PREFS = "pi-pocket";
 	public static final String KEY_HOST = "host";
 	public static final String KEY_TOKEN = "token";
@@ -38,15 +41,19 @@ public class MainActivity extends Activity {
 	private Button connectBtn;
 	private Button scanBtn;
 	private volatile boolean scanning = false;
+	private boolean fromApp = false;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 
 		SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+		fromApp = getIntent().getBooleanExtra(EXTRA_FROM_APP, false);
 		String lastOk = prefs.getString(KEY_LAST, null);
-		// 已经连过的地址，直接进主界面（主界面连不上会自动退回这里）
-		if (lastOk != null && !lastOk.isEmpty()) {
+
+		// 首次启动且已有可用地址：直接进主界面。
+		// 但如果是从 App 内点"连接设置"进来的，就留在本页让用户改。
+		if (!fromApp && lastOk != null && !lastOk.isEmpty()) {
 			Intent i = new Intent(this, WebActivity.class);
 			i.putExtra(WebActivity.EXTRA_HOST, lastOk);
 			i.putExtra(WebActivity.EXTRA_TOKEN, prefs.getString(KEY_TOKEN, ""));
@@ -67,6 +74,11 @@ public class MainActivity extends Activity {
 		if (host.isEmpty()) host = Net.guessGateway();
 		hostInput.setText(host);
 		tokenInput.setText(prefs.getString(KEY_TOKEN, ""));
+
+		if (fromApp) {
+			// 从 App 内进来改设置：给出明确的标题和返回入口
+			connectBtn.setText("保存并连接");
+		}
 
 		connectBtn.setOnClickListener(v -> {
 			String h = Net.normalizeHost(hostInput.getText().toString());
@@ -195,11 +207,16 @@ public class MainActivity extends Activity {
 				connectBtn.setEnabled(true);
 				if (err == null) {
 					rememberOk(host, token);
-					Intent i = new Intent(MainActivity.this, WebActivity.class);
-					i.putExtra(WebActivity.EXTRA_HOST, host);
-					i.putExtra(WebActivity.EXTRA_TOKEN, token);
-					startActivity(i);
-					finish();
+					if (fromApp) {
+						// 从 App 内改的地址：直接退回，WebActivity.onResume 会检测到变化并重连
+						finish();
+					} else {
+						Intent i = new Intent(MainActivity.this, WebActivity.class);
+						i.putExtra(WebActivity.EXTRA_HOST, host);
+						i.putExtra(WebActivity.EXTRA_TOKEN, token);
+						startActivity(i);
+						finish();
+					}
 				} else {
 					statusText.setText(getString(R.string.connect_failed, host) + "\n" + err);
 				}

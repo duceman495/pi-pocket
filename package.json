@@ -1,6 +1,6 @@
 {
   "name": "pi-pocket",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "手机连上同局域网电脑的 Pi Agent：浏览/进入电脑上所有 pi 会话（手机浏览器 PWA + Android APK）",
@@ -15,7 +15,7 @@
     "README.md"
   ],
   "scripts": {
-    "start": "node server.mjs",
+    "start": "./pocket start",
     "start:open": "node server.mjs --qr --open",
     "build:legacy": "esbuild public/app.js --target=chrome69 --format=esm --outfile=public/app.legacy.js --log-level=warning --banner:js='/* 自动生成，请勿手改：由 public/app.js 经 esbuild --target=chrome69 降级而来，供旧版 Android WebView 使用。改代码请改 app.js 后执行 npm run build:legacy */'",
     "build:android": "cd android && ./build.sh",
@@ -27,7 +27,11 @@
     "demo:shots": "node tools/ui-check.mjs 8899 \"\" demo",
     "install-bridge": "./tools/install-bridge.sh",
     "check:bridge": "node tools/bridge-sync-check.mjs",
-    "check:multiclient": "node tools/bridge-multiclient-check.mjs"
+    "check:multiclient": "node tools/bridge-multiclient-check.mjs",
+    "stop": "./pocket stop",
+    "status": "./pocket status",
+    "logs": "./pocket logs",
+    "qr": "./pocket qr"
   },
   "engines": {
     "node": ">=22"

@@ -7,3 +7,7 @@ android/debug.keystore
 *.apk
 !android/dist/pi-pocket.apk
 .DS_Store
+
+# pocket 控制台运行时文件
+.run/
+config.sh

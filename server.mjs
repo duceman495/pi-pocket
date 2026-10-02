@@ -15,8 +15,8 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { agentManager, RUNTIME_INFO } from "./src/agent-manager.mjs";
 import { listCatalog } from "./src/session-catalog.mjs";
-import { TuiHub, probeBridge } from "./src/tui-hub.mjs";
-import { DEFAULT_BRIDGE_PORT } from "./src/bridge-client.mjs";
+import { TuiHub } from "./src/tui-hub.mjs";
+import { findBridgeForSession, listBridges, anyBridge } from "./src/bridge-client.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PUBLIC_DIR = join(__dirname, "public");
@@ -36,7 +36,7 @@ const hubs = new Map(); // key -> TuiHub
  * 桥接会话的 key。必须与 TuiHub.keyFor() 保持一致 ——
  * 前端拿这个 key 去连 WS，两边算法不一致就会「该会话未打开」。
  */
-const bridgeKeyFor = (hello) => `bridge-${hello.sessionId}`;
+const bridgeKeyFor = (hello) => `bridge-${hello.sessionId ?? hello.pid}`;
 
 const MIME = {
 	".html": "text/html; charset=utf-8",
@@ -102,7 +102,10 @@ const server = http.createServer(async (req, res) => {
 
 	try {
 		if (path === "/api/health" && req.method === "GET") {
-			const bridge = ENABLE_BRIDGE ? await probeBridge() : null;
+			// 列出电脑上所有在跑、且装了桥接扩展的 pi（每个一个 unix socket）
+			const bridges = ENABLE_BRIDGE ? await listBridges() : [];
+			// 优先展示 TUI 模式的（那才是用户真正在终端里用的）
+			const primary = bridges.find((b) => b.mode === "tui") ?? bridges[0] ?? null;
 			return json(res, 200, {
 				ok: true,
 				host: HOST,
@@ -111,18 +114,30 @@ const server = http.createServer(async (req, res) => {
 				auth: Boolean(TOKEN),
 				runtime: RUNTIME_INFO,
 				// 终端有 pi 在跑时，手机可以直接连上去（两端同一个 agent，显示一致）
-				bridge: bridge
+				bridge: primary
 					? {
 							available: true,
-							port: DEFAULT_BRIDGE_PORT,
-							sessionFile: bridge.sessionFile,
-							sessionId: bridge.sessionId,
-							cwd: bridge.cwd,
-							pid: bridge.pid,
-							model: bridge.model,
-							isIdle: bridge.isIdle,
+							count: bridges.length,
+							sessionFile: primary.sessionFile,
+							sessionId: primary.sessionId,
+							cwd: primary.cwd,
+							pid: primary.pid,
+							model: primary.model,
+							isIdle: primary.isIdle,
+							mode: primary.mode,
 						  }
-					: { available: false, port: DEFAULT_BRIDGE_PORT },
+					: { available: false, count: 0 },
+				// 全部可桥接实例，前端可以列出「哪几个 pi 能接入」
+				bridges: bridges.map((b) => ({
+					sessionFile: b.sessionFile,
+					sessionId: b.sessionId,
+					cwd: b.cwd,
+					pid: b.pid,
+					model: b.model,
+					isIdle: b.isIdle,
+					mode: b.mode,
+					sessionName: b.sessionName ?? null,
+				})),
 			});
 		}
 
@@ -148,17 +163,18 @@ const server = http.createServer(async (req, res) => {
 
 				// 先看终端里是不是已经开着这个会话：能桥接就用桥接（同一个 agent，两端一致）
 				if (ENABLE_BRIDGE && !body.forceNew && !body.copy) {
-					const hello = await probeBridge();
-					const matches =
-						hello?.sessionFile === body.sessionPath ||
-						(!body.sessionPath && !!body.cwd && hello?.cwd === body.cwd);
-					if (matches) {
+					const hello = await findBridgeForSession({
+						sessionPath: body.sessionPath,
+						sessionId: body.sessionId,
+						cwd: body.sessionPath ? undefined : body.cwd,
+					});
+					if (hello?.socket) {
 						const hubKey = bridgeKeyFor(hello);
 						let hub = hubs.get(hubKey);
 						if (hub?.conn) {
 							return json(res, 200, { agent: hub.snapshot(), reused: true, bridged: true });
 						}
-						hub = new TuiHub();
+						hub = new TuiHub(hello.socket);
 						hub.hello = hello;
 						hub.key = hubKey;
 						await hub.connect();

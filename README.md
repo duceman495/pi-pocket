@@ -76,22 +76,46 @@ cd android && ./build.sh          # → dist/pi-pocket.apk
 
 详见 [android/README.md](android/README.md)。
 
-## 启动
+## 启动 / 停止
+
+用自带的控制台脚本管服务，不用每次手动 `nohup`：
 
 ```bash
-cd ~/pi-pocket
-npm install              # 已装好可跳过
-node server.mjs --qr     # 打印二维码，手机扫码打开
-node server.mjs --qr --open   # 顺便在电脑浏览器打开
-./start.sh               # 等价于 node server.mjs --qr
+./pocket start       # 后台启动（首次会自动装依赖）
+./pocket status      # 状态、访问地址、有几个终端 pi 可接入
+./pocket qr          # 打印手机扫码二维码
+./pocket logs        # 实时日志（Ctrl+C 退出）
+./pocket restart     # 重启
+./pocket stop        # 停止（先优雅关掉它启动的 agent 进程）
+./pocket install     # 装成开机自启（macOS launchd）
+./pocket uninstall   # 取消开机自启
 ```
 
-终端会打印局域网地址和二维码（手机需与电脑同一 Wi-Fi）：
+`status` 的输出：
 
 ```
-本机     http://127.0.0.1:8787
-局域网   http://192.168.1.50:8787  (en0)
+  运行中（pid 15400）
+    本机   http://127.0.0.1:8787
+    局域网 http://192.168.1.50:8787   ← 手机用这个
+    桥接   1 个终端 pi 可接入（对话将直接连终端，两端同步）
 ```
+
+端口默认 8787，可改：
+
+```bash
+PI_POCKET_PORT=9000 ./pocket start
+PI_POCKET_TOKEN=$(openssl rand -hex 12) ./pocket start   # 加访问令牌
+```
+
+也可以在项目根目录放一个 `config.sh`（不会进仓库）：
+
+```bash
+# config.sh
+PI_POCKET_PORT=9000
+PI_POCKET_TOKEN=your-token
+```
+
+> 直接 `node server.mjs` 也行，只是少了 start/stop/status 这些便利。
 
 iPhone：Safari 打开 → 分享 → 添加到主屏幕。
 

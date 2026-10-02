@@ -1,0 +1,312 @@
+#!/bin/bash
+# Pi Pocket 服务控制台
+#
+#   ./pocket start      后台启动服务
+#   ./pocket stop       停止服务（会先优雅关闭它启动的 agent 进程）
+#   ./pocket restart    重启
+#   ./pocket status     查看状态、访问地址、二维码
+#   ./pocket logs       实时看日志
+#   ./pocket install    装成开机自启（macOS launchd）
+#   ./pocket uninstall  取消开机自启
+#   ./pocket qr         只打印手机访问用的二维码
+#
+# 环境变量（也可写进 config.sh）：
+#   PI_POCKET_PORT   默认 8787
+#   PI_POCKET_TOKEN  可选访问令牌
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+cd "$ROOT"
+
+RUN_DIR="$ROOT/.run"
+LOG_FILE="$RUN_DIR/pi-pocket.log"
+PID_FILE="$RUN_DIR/pi-pocket.pid"
+PORT="${PI_POCKET_PORT:-8787}"
+PLIST="$HOME/Library/LaunchAgents/com.pipocket.server.plist"
+LABEL="com.pipocket.server"
+
+mkdir -p "$RUN_DIR"
+
+# 可选：允许用户放一个 config.sh 覆盖默认值（不会被提交）
+# shellcheck disable=SC1091
+[ -f "$ROOT/config.sh" ] && . "$ROOT/config.sh"
+
+c_ok()   { printf "  \033[32m%s\033[0m\n" "$1"; }
+c_warn() { printf "  \033[33m%s\033[0m\n" "$1"; }
+c_err()  { printf "  \033[31m%s\033[0m\n" "$1"; }
+
+# ---------------------------------------------------------------- 进程判断
+
+# 取当前正在跑的服务的 pid（优先 pid 文件，其次按端口反查）
+running_pid() {
+	if [ -f "$PID_FILE" ]; then
+		local p
+		p="$(cat "$PID_FILE" 2>/dev/null)"
+		if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then
+			echo "$p"
+			return 0
+		fi
+	fi
+	return 1
+}
+
+port_user_pid() {
+	lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1
+}
+
+# ---------------------------------------------------------------- 地址/二维码
+
+lan_ip() {
+	# 取第一个非虚拟网卡的 IPv4（跳过 bridge/vmnet/utun）
+	for i in $(ifconfig -l 2>/dev/null); do
+		case "$i" in
+			lo*|bridge*|vmnet*|utun*|awdl*|llw*|gif*|stf*|ap*) continue ;;
+		esac
+		local a
+		a="$(ipconfig getifaddr "$i" 2>/dev/null)"
+		[ -n "$a" ] && { echo "$a"; return; }
+	done
+	ipconfig getifaddr en0 2>/dev/null
+}
+
+access_url() {
+	local ip; ip="$(lan_ip)"
+	echo "http://${ip:-127.0.0.1}:$PORT"
+}
+
+print_qr() {
+	local url; url="$(access_url)"
+	[ -n "${PI_POCKET_TOKEN:-}" ] && url="${url}/?token=${PI_POCKET_TOKEN}"
+	node -e '
+		const url = process.argv[1];
+		import("qrcode-terminal").then(m => (m.default ?? m).generate(url, { small: true }))
+			.catch(() => console.log("  （二维码不可用，请手动输入地址）"));
+	' "$url" 2>/dev/null || c_warn "（二维码不可用，请手动输入地址）"
+}
+
+# ---------------------------------------------------------------- 命令
+
+cmd_start() {
+	local pid=""
+	pid="$(running_pid)" || pid="$(port_user_pid)"
+	if [ -n "$pid" ]; then
+		c_warn "服务已经在运行（pid ${pid}）"
+		cmd_status
+		return 0
+	fi
+
+	# 检查依赖
+	if [ ! -d node_modules ]; then
+		echo "  首次运行，安装依赖…"
+		npm install --no-audit --no-fund >/dev/null 2>&1 || { c_err "依赖安装失败"; exit 1; }
+	fi
+	echo "  启动中…"
+	# 清掉可能从父 pi 进程继承来的变量，避免服务端自己 spawn 的 agent 误判。
+	# 注意：macOS 自带 bash 3.2，`set -u` 下展开空数组会报错，所以这里不用数组。
+	if [ -n "${PI_POCKET_TOKEN:-}" ]; then
+		nohup env -u PI_POCKET_AGENT -u PI_CODING_AGENT PI_POCKET_TOKEN="$PI_POCKET_TOKEN" \
+			node server.mjs --port="$PORT" >>"$LOG_FILE" 2>&1 &
+	else
+		nohup env -u PI_POCKET_AGENT -u PI_CODING_AGENT \
+			node server.mjs --port="$PORT" >>"$LOG_FILE" 2>&1 &
+	fi
+	echo $! > "$PID_FILE"
+
+	# 等端口真的起来
+	for _ in $(seq 1 40); do
+		if curl -s -m 1 "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+			c_ok "已启动（pid $(cat "$PID_FILE")）"
+			echo
+			cmd_status
+			return 0
+		fi
+		sleep 0.25
+	done
+	c_err "启动超时，看看日志： ./pocket logs"
+	tail -15 "$LOG_FILE" 2>/dev/null | sed 's/^/    /'
+	return 1
+}
+
+cmd_stop() {
+	local pid=""
+	pid="$(running_pid)" || pid="$(port_user_pid)"
+
+	if [ -z "$pid" ]; then
+		c_warn "服务没在运行"
+		rm -f "$PID_FILE"
+		return 0
+	fi
+
+	echo "  正在停止（pid ${pid}）…"
+	# server.mjs 收到 SIGTERM 会先关掉它启动的所有 agent 进程
+	kill -TERM "$pid" 2>/dev/null
+
+	for _ in $(seq 1 30); do
+		kill -0 "$pid" 2>/dev/null || { rm -f "$PID_FILE"; c_ok "已停止"; return 0; }
+		sleep 0.3
+	done
+
+	c_warn "没反应，强制结束"
+	kill -9 "$pid" 2>/dev/null
+	rm -f "$PID_FILE"
+	c_ok "已强制停止"
+}
+
+cmd_restart() {
+	cmd_stop
+	sleep 1
+	cmd_start
+}
+
+cmd_status() {
+	local pid=""
+	pid="$(running_pid)" || pid="$(port_user_pid)"
+
+	if [ -z "$pid" ]; then
+		c_err "未运行"
+		echo "    启动： ./pocket start"
+		return 1
+	fi
+
+	c_ok "运行中（pid ${pid}）"
+	echo "    本机   http://127.0.0.1:$PORT"
+	local ip; ip="$(lan_ip)"
+	[ -n "$ip" ] && echo "    局域网 http://$ip:$PORT   ← 手机用这个"
+	[ -n "${PI_POCKET_TOKEN:-}" ] && echo "    令牌   已启用（访问时需带 ?token=）"
+
+	# 顺便报告桥接情况：有几个终端 pi 能接入
+	local health
+	health="$(curl -s -m 2 "http://127.0.0.1:$PORT/api/health" 2>/dev/null)"
+	if [ -n "$health" ]; then
+		echo "$health" | PI_PORT="$PORT" node -e '
+			let raw=""; process.stdin.on("data",d=>raw+=d).on("end",()=>{
+				try {
+					const d = JSON.parse(raw);
+					const n = (d.bridges ?? []).length;
+					const p = d.bridge;
+					if (p?.available) {
+						console.log(`    桥接   ${n} 个终端 pi 可接入（对话将直接连终端，两端同步）`);
+					} else {
+						console.log("    桥接   无（手机将各自启动独立 agent 进程）");
+						console.log("           想要两端同步：在终端里跑 pi，并 npm run install-bridge");
+					}
+					if (d.runtime?.isolateMode) console.log("    模式   副本模式（PI_POCKET_ISOLATE=1）");
+				} catch { console.log("    （健康检查返回异常）"); }
+			});
+		' 2>/dev/null
+	fi
+	return 0
+}
+
+cmd_logs() {
+	if [ ! -f "$LOG_FILE" ]; then
+		c_warn "还没有日志（服务没启动过？）"
+		return 1
+	fi
+	echo "  日志：$LOG_FILE   （Ctrl+C 退出）"
+	tail -n 50 -f "$LOG_FILE"
+}
+
+cmd_qr() {
+	local url; url="$(access_url)"
+	[ -n "${PI_POCKET_TOKEN:-}" ] && url="${url}/?token=${PI_POCKET_TOKEN}"
+	echo
+	print_qr
+	echo "  $url"
+	echo
+}
+
+# ---------------------------------------------------------------- 开机自启
+
+cmd_install() {
+	local node_bin; node_bin="$(command -v node)"
+	[ -z "$node_bin" ] && { c_err "找不到 node"; exit 1; }
+
+	mkdir -p "$(dirname "$PLIST")"
+	cat > "$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key><string>${LABEL}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${node_bin}</string>
+		<string>${ROOT}/server.mjs</string>
+		<string>--port=${PORT}</string>
+	</array>
+	<key>WorkingDirectory</key><string>${ROOT}</string>
+	<key>RunAtLoad</key><true/>
+	<key>KeepAlive</key><true/>
+	<key>StandardOutPath</key><string>${LOG_FILE}</string>
+	<key>StandardErrorPath</key><string>${LOG_FILE}</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		$( [ -n "${PI_POCKET_TOKEN:-}" ] && echo "<key>PI_POCKET_TOKEN</key><string>${PI_POCKET_TOKEN}</string>" )
+		<key>PATH</key><string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:${HOME}/.npm-global/bin</string>
+	</dict>
+</dict>
+</plist>
+PLIST_EOF
+
+	# 装之前先把手动起的停掉，避免抢端口
+	cmd_stop >/dev/null 2>&1
+
+	launchctl unload "$PLIST" 2>/dev/null
+	launchctl load "$PLIST" 2>/dev/null
+	if launchctl list 2>/dev/null | grep -q "$LABEL"; then
+		c_ok "已设为开机自启"
+		echo "    配置 $PLIST"
+		echo "    日志 $LOG_FILE"
+		echo "    停止： launchctl unload $PLIST"
+		echo "    或直接 ./pocket stop"
+	else
+		c_err "注册失败，试试手动加载： launchctl load $PLIST"
+		return 1
+	fi
+	sleep 2
+	echo
+	cmd_status
+}
+
+cmd_uninstall() {
+	if [ -f "$PLIST" ]; then
+		launchctl unload "$PLIST" 2>/dev/null
+		rm -f "$PLIST"
+		c_ok "已取消开机自启"
+	else
+		c_warn "没有安装开机自启"
+	fi
+	rm -f "$PID_FILE"
+}
+
+usage() {
+	cat <<EOF
+
+  Pi Pocket 服务控制
+
+    ./pocket start        后台启动
+    ./pocket stop         停止
+    ./pocket restart      重启
+    ./pocket status       查看状态和访问地址
+    ./pocket qr           打印手机扫码用的二维码
+    ./pocket logs         实时日志（Ctrl+C 退出）
+    ./pocket install      装成开机自启（macOS）
+    ./pocket uninstall    取消开机自启
+
+  端口默认 8787，可用 PI_POCKET_PORT 改；设 PI_POCKET_TOKEN 可加访问令牌。
+
+EOF
+}
+
+case "${1:-}" in
+	start)     cmd_start ;;
+	stop)      cmd_stop ;;
+	restart)   cmd_restart ;;
+	status|st) cmd_status ;;
+	logs|log)   cmd_logs ;;
+	qr)        cmd_qr ;;
+	install)   cmd_install ;;
+	uninstall) cmd_uninstall ;;
+	*)         usage ;;
+esac

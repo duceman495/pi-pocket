@@ -5,7 +5,7 @@
  * 前置：
  *   1. 电脑上 Pi Pocket 服务在跑
  *   2. 模拟器里 App 已连上（地址用 10.0.2.2:8787，模拟器访问宿主机的特殊地址）
- *   3. adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>
+ *   3. adb forward tcp:9223 localabstract:webview_devtools_remote_<pid>
  *
  * 用法: node tools/android-app-check.mjs [cdpPort]
  */
@@ -14,7 +14,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { writeFileSync } from "node:fs";
 import WebSocket from "ws";
 
-const CDP_PORT = Number(process.argv[2] ?? 9222);
+const CDP_PORT = Number(process.argv[2] ?? 9223);
 const ADB = process.env.ADB ?? `${process.env.HOME}/android-sdk/platform-tools/adb`;
 const PKG = "com.pipocket";
 
@@ -54,7 +54,7 @@ for (let i = 0; i < 5; i++) {
 const page = targets.find((t) => t.type === "page");
 check("拿到 WebView 里的页面", Boolean(page), page?.url ?? "无");
 if (!page) {
-	console.log("\n提示：先 adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>");
+	console.log("\n提示：先 adb forward tcp:9223 localabstract:webview_devtools_remote_<pid>");
 	process.exit(1);
 }
 check("页面加载的是电脑上的 Pi Pocket", /^http:\/\/[\d.]+:\d+\//.test(page.url ?? ""), page.url);
