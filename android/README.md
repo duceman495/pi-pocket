@@ -87,7 +87,7 @@ npm run build:legacy     # 改完 public/app.js 后执行一次
 
 ## 使用
 
-1. 电脑上先启动服务：`node server.mjs`（或 `./tools/run.sh`）
+1. 电脑上先启动服务：`./pocket start`（会直接告诉你该连哪个地址）
 2. 手机连**同一个 Wi-Fi**，打开 Pi Pocket
 3. 点「扫描局域网」→ 自动列出电脑地址 → 点一下连接（也可以手输 `IP:端口`）
 4. 连上后就是完整界面；下次启动直接进入

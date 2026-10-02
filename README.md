@@ -24,7 +24,7 @@ Pi Pocket 有两种工作方式，打开会话时**自动选择**：
 ```bash
 npm run install-bridge     # 一次性：装桥接扩展到 ~/.pi/agent/extensions/
 pi                         # 之后正常启动 pi 即可，无需额外参数
-node server.mjs            # 另开一个终端跑 Pi Pocket 服务（或 ./tools/run.sh）
+node server.mjs            # 另开一个终端跑 Pi Pocket 服务（或 ./pocket start）
 ```
 
 手机打开 Pi Pocket，首页顶部会出现绿色的 **「终端 pi 正在运行」** 卡片，点一下即接入。
@@ -38,7 +38,7 @@ node server.mjs            # 另开一个终端跑 Pi Pocket 服务（或 ./tool
    终端 TUI ──│  pi 进程（唯一的 agent）     │
   （原生界面） │   └ pi-pocket-bridge 扩展    │
               └──────────────┬──────────────┘
-                             │ WebSocket 127.0.0.1:8788
+                             │ Unix socket（每个 pi 一个）
                     ┌────────┴────────┐
                     │  Pi Pocket 8787 │
                     └────────┬────────┘
@@ -52,7 +52,9 @@ node server.mjs            # 另开一个终端跑 Pi Pocket 服务（或 ./tool
 
 ### 注意事项
 
-- 桥接端口固定 8788，同时只有一个 pi 实例能提供桥接（第二个会探测到端口占用并自动跳过）。
+- 每个 pi 实例各自监听一个 socket（`~/.pi/agent/pi-pocket-bridge/<pid>.sock`），
+  所以**可以同时有多个 pi 提供桥接**，与启动顺序无关。服务端按会话文件精确匹配。
+- socket 文件万一被外部删掉（清理临时目录、脚本 `rm -rf` 等），扩展会在 20 秒内自动重建。
 - 终端用 `--no-session` 启动时没有会话文件，无法对应到具体会话，桥接不生效。
 - 手机上「断开连接」只是停止监听，**不会杀掉你终端里的 pi**。
 
@@ -150,15 +152,21 @@ iPhone：Safari 打开 → 分享 → 添加到主屏幕。
 - 菜单「开副本」→ fork 成新文件后继续，原会话文件完全不受影响
 - 列表里的运行中徽标让你随时知道电脑上还开着哪几个会话
 
-## 三种进入方式
+## 四种进入方式
 
-| 方式 | 命令 | 说明 |
+打开会话时自动选择，优先级从上到下：
+
+| 方式 | 什么时候用 | 说明 |
 | --- | --- | --- |
-| 续接（默认） | `pi --mode rpc --session <file>` | 真正续上原会话，历史/上下文/分支都在 |
-| 副本 | fork 成新文件再 `--session` | 完全不碰原文件，适合原会话还开在电脑终端里 |
-| 新建 | `pi --mode rpc`（指定 cwd） | 全新会话 |
+| **接入终端**（优先） | 终端里正开着这个会话且装了桥接扩展 | 连上**同一个** agent 进程，两端实时同步 |
+| 续接 | 终端没开这个会话 | `pi --mode rpc --session <file>`，历史/上下文都在 |
+| 副本 | 想并行操作、不动原会话 | fork 成新文件再 `--session` |
+| 新建 | 全新任务 | `pi --mode rpc`（指定 cwd） |
 
-> `PI_POCKET_ISOLATE=1 node server.mjs` 可让「续接」也默认走副本模式。
+> 续接模式下如果终端也开着同一个会话，手机会显示黄色横幅提示「两端不会同步、
+> 同时发消息可能互相覆盖」，并给出处理方式。
+>
+> `PI_POCKET_ISOLATE=1` 可让「续接」也默认走副本模式。
 
 ## 环境变量 / 参数
 
@@ -170,7 +178,7 @@ iPhone：Safari 打开 → 分享 → 添加到主屏幕。
 | `PI_POCKET_ISOLATE` | 0 | 置 1 则默认副本方式打开 |
 | `PI_POCKET_CLI` | 包内 `dist/cli.js` | 指定 pi CLI 入口 |
 
-`--qr` 打印二维码，`--open` 顺便在电脑浏览器打开。
+`--qr` 打印二维码，`--open` 顺便在电脑浏览器打开（等价于 `./pocket qr`）。
 
 ## 安全
 
@@ -185,8 +193,9 @@ PI_POCKET_TOKEN=$(openssl rand -hex 12) node server.mjs --qr
 
 ## 已知限制
 
-- **同一会话不要两边同时发消息**：续接模式下手机进程和电脑终端进程写同一个会话
-  文件，可能互相覆盖。要并行操作请用「副本」，或设置 `PI_POCKET_ISOLATE=1`。
+- **同一会话不要两边同时发消息**：桥接模式（推荐）下两端本来就是同一个 agent，不存在
+  这个问题；但**续接**模式下手机进程和终端进程会写同一个会话文件，可能互相覆盖。
+  要并行操作请用「副本」，或设置 `PI_POCKET_ISOLATE=1`。
 - 每次进入会话会启动一个 pi 进程（约 1–3 秒）。返回列表后进程保留，最多同时开
   4 个左右比较稳妥；用「关闭进程」释放。
 - 手机切后台后 WebSocket 可能被系统断开，回到前台点菜单「同步」即可恢复。
@@ -195,7 +204,7 @@ PI_POCKET_TOKEN=$(openssl rand -hex 12) node server.mjs --qr
 ## 自检
 
 ```bash
-node server.mjs &                       # 先起服务
+./pocket start                          # 先起服务
 node tools/ui-check.mjs 8787            # 首页/进入/返回/深链/菜单（24 项）
 node tools/ui-check.mjs 8787 legacy=1   # 同一套断言跑降级包（24 项）
 node tools/send-check.mjs 8787 0        # 真发消息验证流式/工具卡片（消耗 token）
@@ -209,18 +218,25 @@ node tools/bridge-multiclient-check.mjs 8787  # 多端广播、两端显示一�
 
 Android 端到端自检见 [android/README.md](android/README.md)（模拟器里穿透 WebView 检查，17 项）。
 
-用 headless Chrome + 裸 CDP 驱动，无需安装额外依赖，截图会写到 `/tmp/pocket-*.png`。
+用 headless Chrome + 裸 CDP 驱动，无需安装额外依赖。
+
+`ui-check.mjs` 的用法是 `node tools/ui-check.mjs [端口] [额外query] [截图前缀]`，
+截图写到 `/tmp/<前缀>-1-home.png` 等；`npm run demo:shots` 会用合成数据重拍文档里的截图。
 
 ## 目录结构
 
 ```
-server.mjs              HTTP + WS 服务，会话目录 API + 命令透传
-src/session-catalog.mjs 扫描 ~/.pi/agent/sessions 并按项目分组
-src/agent-manager.mjs   管理 pi RPC 子进程（启动/复用/关闭/事件缓冲）
-public/                 前端（app.js 为源码，app.legacy.js 由 esbuild 生成）
-android/                Android App（纯 Java + WebView 外壳）
-tools/                  自检脚本
-docs/                   截图
+pocket                          服务控制台（start/stop/status/qr/logs/install）
+server.mjs                      HTTP + WS 服务，会话目录 API + 命令透传
+src/session-catalog.mjs         扫描 ~/.pi/agent/sessions 并按项目分组
+src/agent-manager.mjs           管理 pi RPC 子进程（独立进程模式）
+src/bridge-client.mjs           发现电脑上所有可桥接的 pi（扫描 unix socket）
+src/tui-hub.mjs                 接入终端那个 agent（桥接模式）
+extensions/pi-pocket-bridge.ts  pi 侧扩展（零 npm 依赖）
+public/                         前端（app.js 为源码，app.legacy.js 由 esbuild 生成）
+android/                        Android App（纯 Java + WebView 外壳）
+tools/                          自检脚本
+docs/                           截图 + 桥接协议说明
 ```
 
 ### 老手机（旧版 WebView）
@@ -239,9 +255,13 @@ npm run build:legacy    # 改完 public/app.js 后执行一次
 截图用的是一套**合成的演示数据**（`npm run demo:data` 生成，放在 `~/pi-pocket-demo/`），
 不包含任何真实项目名、内网 IP 或私人对话。
 
-| 会话列表 | 对话页 | 菜单 |
+| 会话列表（顶部是终端接入卡片） | 对话页 | 菜单 |
 | --- | --- | --- |
 | ![](docs/screenshot-home.png) | ![](docs/screenshot-chat.png) | ![](docs/screenshot-menu.png) |
+
+当检测到「终端开着 pi 但连不上」时，会话里会显示原因和处理办法：
+
+![](docs/screenshot-warning.png)
 
 自己重拍：
 
