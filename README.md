@@ -66,8 +66,12 @@ node server.mjs            # 另开一个终端跑 Pi Pocket 服务（或 ./tool
 手机上体验和原生 App 基本一致（全屏、无地址栏、深色主题）。
 
 想要真正的 App，`android/` 里还有一个 **34KB 原生 APK**（纯 Java + WebView，无 AndroidX/
-Gradle 依赖），额外补上了浏览器给不了的能力：**局域网自动发现、系统返回键映射、记住地址、
-断线重连**。源码共用同一套前端，改网页 = 改 App。
+Gradle 依赖），额外补上了浏览器给不了的能力：**局域网自动发现、网关地址随时可改、
+系统返回键映射、断线重连**。源码共用同一套前端，改网页 = 改 App。
+
+**直接下载安装**（Android 7.0+）：[最新 APK](https://github.com/duceman495/pi-pocket/releases/latest)
+
+自己构建：
 
 ```bash
 cd android && ./build.sh          # → dist/pi-pocket.apk
