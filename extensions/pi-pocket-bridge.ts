@@ -25,7 +25,7 @@
  * 协议见 docs/bridge-protocol.md。
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { appendFileSync, mkdirSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { homedir } from "node:os";
@@ -347,6 +347,7 @@ export default function (pi: ExtensionAPI) {
 			core.getHello = helloPayload;
 			core.getHistory = entriesOf;
 			core.handleCommand = handleCommand;
+			ensureSocket(); // socket 文件可能被外部删掉了（见 ensureSocket 注释）
 			// 已有服务：把当前状态同步给已连接的客户端
 			emit({ t: "hello", ...(helloPayload() as object) });
 			return;
@@ -469,6 +470,42 @@ export default function (pi: ExtensionAPI) {
 			log("无法启动桥接: " + (err?.stack ?? startError));
 		}
 	};
+
+	/* ------------------------------ 自愈 ------------------------------ */
+
+	/**
+	 * 确保监听 socket 还在。
+	 *
+	 * 为什么需要：unix socket 是一个**文件**，任何外部因素都可能把它删掉
+	 * （清理临时目录、我自己的测试脚本 rm -rf、tmpfiles 之类）。
+	 * 一旦文件没了，进程虽然还占着 fd，但外部永远连不上（connect ENOENT），
+	 * 表现就是"手机莫名退回独立进程、两端不同步"，而且完全看不出原因。
+	 * 这里定期检查并重建。
+	 */
+	const ensureSocket = () => {
+		const core = getCore();
+		if (!core) return;
+		let exists = false;
+		try {
+			exists = existsSync(SOCKET_PATH);
+		} catch {
+			exists = false;
+		}
+		if (exists) return;
+		log(`socket 文件不见了，正在重建 ${SOCKET_PATH}`);
+		try {
+			core.server?.close?.();
+		} catch {
+			/* ignore */
+		}
+		// 清掉单例，让 startServer 重新建一遍
+		(globalThis as any)[GLOBAL_KEY] = null;
+		startServer();
+	};
+
+	const healthTimer = setInterval(ensureSocket, 20_000);
+	// 别让这个定时器把进程吊住
+	(healthTimer as any).unref?.();
 
 	/* ------------------------------ 收尾 ------------------------------ */
 

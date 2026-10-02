@@ -517,6 +517,13 @@ function updateStatus() {
   $("chat-sub").textContent = prettyCwd(info.cwd);
   $("btn-stop").classList.toggle("hidden", info.status !== "streaming");
   $("btn-send").classList.toggle("hidden", info.status === "streaming");
+  const warn = $("chat-warning");
+  if (info.warning) {
+    warn.textContent = info.warning;
+    warn.classList.remove("hidden");
+  } else {
+    warn.classList.add("hidden");
+  }
 }
 function handleAgentEvent(ev) {
   var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k;

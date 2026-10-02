@@ -185,17 +185,44 @@ cmd_status() {
 					const n = (d.bridges ?? []).length;
 					const p = d.bridge;
 					if (p?.available) {
-						console.log(`    桥接   ${n} 个终端 pi 可接入（对话将直接连终端，两端同步）`);
+						const list = (d.bridges ?? []).map(b => `pid ${b.pid}`).join(", ");
+						console.log(`    桥接   ${n} 个终端 pi 可接入（${list}）`);
+						console.log("           手机进会话时会直接连终端那个 agent，两端实时同步");
 					} else {
-						console.log("    桥接   无（手机将各自启动独立 agent 进程）");
-						console.log("           想要两端同步：在终端里跑 pi，并 npm run install-bridge");
+						console.log("    桥接   无（手机将为每个会话单独启动 agent 进程，两端不同步）");
 					}
 					if (d.runtime?.isolateMode) console.log("    模式   副本模式（PI_POCKET_ISOLATE=1）");
 				} catch { console.log("    （健康检查返回异常）"); }
 			});
 		' 2>/dev/null
 	fi
+	# 没有桥接时，进一步诊断原因（这是最难自查的一种故障）
+	if [ -n "$health" ] && ! echo "$health" | grep -q '"available":true'; then
+		diagnose_no_bridge
+	fi
 	return 0
+}
+
+# 解释"为什么没有桥接"，并按情况给出该做什么
+diagnose_no_bridge() {
+	local pi_count
+	pi_count="$(pgrep -f 'pi$' 2>/dev/null | wc -l | tr -d ' ')"
+	# 有进程占着桥接目录里的 socket，但目录里没有对应文件 = 文件被外部删了
+	local orphan
+	orphan="$(lsof -nP 2>/dev/null | grep -c "pi-pocket-bridge/.*\.sock" || true)"
+
+	if [ "$orphan" -gt 0 ] 2>/dev/null; then
+		c_warn "检测到有 pi 进程占着已失效的 socket（文件被外部删掉了）"
+		echo "           在终端那个 pi 里敲 /reload 即可自动重建"
+	elif [ "$pi_count" -eq 0 ]; then
+		echo "           电脑上现在没有跑着 pi。要两端同步：先在终端里跑 pi"
+	else
+		echo "           检测到 $pi_count 个 pi 进程，但它们没有提供桥接（多半是启动时还没装扩展）"
+		echo "           在终端那个 pi 里敲 /reload（或重启 pi）即可生效"
+	fi
+	if [ ! -e "$HOME/.pi/agent/extensions/pi-pocket-bridge.ts" ]; then
+		echo "           注意：桥接扩展还没安装 —— 先跑 npm run install-bridge"
+	fi
 }
 
 cmd_logs() {

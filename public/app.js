@@ -598,6 +598,15 @@ function updateStatus() {
 	$("chat-sub").textContent = prettyCwd(info.cwd);
 	$("btn-stop").classList.toggle("hidden", info.status !== "streaming");
 	$("btn-send").classList.toggle("hidden", info.status === "streaming");
+
+	// 提示性警告（例如"终端里也开着同一个会话"）
+	const warn = $("chat-warning");
+	if (info.warning) {
+		warn.textContent = info.warning;
+		warn.classList.remove("hidden");
+	} else {
+		warn.classList.add("hidden");
+	}
 }
 
 /* ----------------------------------------------------------- WS 事件处理 */

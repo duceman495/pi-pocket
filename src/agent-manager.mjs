@@ -11,7 +11,7 @@
  * 注意：resume 会让手机端进程和电脑终端进程写同一个会话文件，两边不要同时
  * 对同一会话发消息。
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { getAgentDir, getPackageDir, SessionManager } from "@earendil-works/pi-coding-agent";
@@ -21,7 +21,38 @@ const RECENT_TURNS = 60;
 const ISOLATE_MODE = process.env.PI_POCKET_ISOLATE === "1";
 const CLI = process.env.PI_POCKET_CLI ?? `${getPackageDir()}/dist/cli.js`;
 
+/**
+ * 电脑上有几个「终端里自己开的」pi？
+ *
+ * 用来判断"用户明明开着 pi，为什么手机不同步"这类问题。
+ * 必须排除掉本服务自己 spawn 的 agent，否则永远大于 0，提示就没有意义了。
+ *
+ * 注意：不能用 lsof 看会话文件 —— pi 只在写的时候才打开文件，不持续持有，
+ * 所以 lsof 查不到（试过，会漏判）。
+ */
+function terminalPiCount() {
+	try {
+		const out = execFileSync("pgrep", ["-x", "pi"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+		const pids = out.split("\n").map((x) => x.trim()).filter(Boolean).map(Number);
+		let count = 0;
+		for (const pid of pids) {
+			try {
+				// 父进程是本服务的，就是手机自己开的 agent，不算
+				const ppid = Number(execFileSync("ps", ["-p", String(pid), "-o", "ppid="], { encoding: "utf8" }).trim());
+				if (ppid !== process.pid) count++;
+			} catch {
+				/* ignore */
+			}
+		}
+		return count;
+	} catch {
+		return 0; // pgrep 无匹配时退出码非 0
+	}
+}
+
 /** 一条会话在服务端的运行时状态 */
+
+
 class AgentBridge {
 	constructor({ key, sessionPath, cwd, sessionId, mode, sourcePath }) {
 		this.key = key;
@@ -40,6 +71,8 @@ class AgentBridge {
 		this.state = { model: null, thinkingLevel: null, sessionName: null };
 		this.stats = null;
 		this.lastError = null;
+		/** 提示性警告（如"终端也开着这个会话"），前端会显示成横幅 */
+		this.warning = null;
 		this.emitter = new EventEmitter();
 		this.emitter.setMaxListeners(0);
 		this.stdoutBuf = "";
@@ -60,6 +93,7 @@ class AgentBridge {
 			stats: this.stats,
 			pending: { steering: this.pendingSteer, followUp: this.pendingFollowUp },
 			lastError: this.lastError,
+			warning: this.warning,
 		};
 	}
 
@@ -357,6 +391,18 @@ export class AgentManager {
 			sessionId,
 			mode,
 		});
+
+		// 用户终端里开着 pi、但手机这边只能自己起进程 → 说清楚为什么不同步
+		if (mode === "resume") {
+			const terminals = terminalPiCount();
+			if (terminals > 0) {
+				bridge.warning =
+					`检测到电脑终端里还开着 ${terminals} 个 pi，但手机这边连不上它，` +
+					`所以现在是独立的 agent 进程，两端不会互相同步（同时发消息还可能互相覆盖）。` +
+					`想让两端实时同步：在终端那个 pi 里敲 /reload 启用桥接，` +
+					`或改用「开副本」在不影响原会话的前提下继续。`;
+			}
+		}
 		this.bridges.set(key, bridge);
 		try {
 			await bridge.start();
