@@ -68,6 +68,12 @@ cd android
 
 要求：**Android 7.0 (API 24) 及以上**。
 
+> **关于签名**：`android/debug.keystore` 不入库（这是好习惯），首次构建会自动生成。
+> 所以你自己构建出来的 APK 与
+> [Release 里发布的那个](https://github.com/duceman495/pi-pocket/releases/latest)
+> **签名不同、无法覆盖安装** —— 换着装之前要先卸载。想固定签名就把自己的 keystore
+> 放进 `android/` 并把 `build.sh` 里的口令改成你的。
+
 ### 老手机的兼容处理
 
 桌面/新版 WebView 用的是现代 JS，但**旧版 WebView 不支持 `?.` / `??`**，会直接
